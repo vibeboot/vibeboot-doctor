@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-// src/lib/nextjs-errors.ts
+// ../vibeboot-site/src/lib/nextjs-errors.ts
 var CHECKED_ON = "October 24, 2026";
 var CHECKED_ISO = "2026-10-24";
 var VERSIONS = "Next.js 16.4.3 \xB7 React 19.3";
@@ -248,9 +248,9 @@ Error: Module not found: Can't resolve 'fs'
     match: ["can only install packages when your package.json and package-lock.json", "are in sync", "does not satisfy next@", "lock file's next@", "npm ci", "eusage", "next@latest", "lockfile", "package-lock"],
     means: "Someone (often an agent fixing something else) changed the next version in package.json without updating package-lock.json, so a clean install refuses to run. The lockfile is what pins the exact version you tested: a range like ^16.4.3 in package.json allows any later 16.x, so without a committed lockfile each install can build against a different Next.js.",
     causes: ["An agent edited the next, react or eslint-config-next version in package.json, or ran npm install next@latest, while fixing something else", `package-lock.json is in .gitignore, wasn't committed, or was deleted to "fix" an install error`, "next, eslint-config-next and react changed in different commits"],
-    fix: ["See what's installed: npm ls next react react-dom", "Pin the exact version you last tested (use yours): npm pkg set dependencies.next=16.4.3 devDependencies.eslint-config-next=16.4.3, run npm install to update package-lock.json, then commit both files together", "Use npm ci in CI and deploy builds so installs match the lockfile exactly", "Upgrade on purpose in its own branch: npx @next/codemod@canary upgrade latest, then run the build and tests"],
-    code: { file: "terminal", body: 'npm ls next react react-dom\nnpm pkg set dependencies.next=16.4.3 devDependencies.eslint-config-next=16.4.3\nnpm install\ngit add package.json package-lock.json\ngit commit -m "Pin next to 16.4.3"\nnpm ci && npm run build' },
-    prompt: "npm ci fails because package.json and package-lock.json are out of sync on next. Don't upgrade anything. Find which commit changed the next/react/eslint-config-next versions, restore the last version the app built with, pin it as an exact version (no ^), regenerate the lockfile with npm install, and confirm npm ci && npm run build pass. List every version you changed."
+    fix: ["See what's installed: npm ls next react react-dom", "Pin an exact version you have tested (no ^), and make it 16.4.5 or later since 16.4.5 is the Nov 3, 2026 security release: npm pkg set dependencies.next=16.4.5 devDependencies.eslint-config-next=16.4.5, run npm install to update package-lock.json, then commit both files together", "Use npm ci in CI and deploy builds so installs match the lockfile exactly", "Upgrade on purpose in its own branch: npx @next/codemod@canary upgrade latest, then run the build and tests"],
+    code: { file: "terminal", body: 'npm ls next react react-dom\nnpm pkg set dependencies.next=16.4.5 devDependencies.eslint-config-next=16.4.5\nnpm install\ngit add package.json package-lock.json\ngit commit -m "Pin next to 16.4.5"\nnpm ci && npm run build' },
+    prompt: "npm ci fails because package.json and package-lock.json are out of sync on next. Don't upgrade anything. Find which commit changed the next/react/eslint-config-next versions, restore the last version the app built with, pin it as an exact version (no ^), regenerate the lockfile with npm install, and confirm npm ci && npm run build pass. If that version is below 16.4.5 (the Nov 3, 2026 Next.js security release), tell me before pinning it. List every version you changed."
   },
   {
     id: "max-update-depth",
@@ -274,7 +274,7 @@ function scoreError(e, raw) {
   return s;
 }
 
-// src/lib/authjs-errors.ts
+// ../vibeboot-site/src/lib/authjs-errors.ts
 var CHECKED_ON2 = "October 27, 2026";
 var CHECKED_ISO2 = "2026-10-27";
 var VERSIONS2 = "next-auth 5.0.0-beta.32 \xB7 @auth/core 0.41.3 \xB7 Next.js 16.4.3";
@@ -474,7 +474,7 @@ function scoreError2(e, raw) {
   return s;
 }
 
-// src/lib/prisma-errors.ts
+// ../vibeboot-site/src/lib/prisma-errors.ts
 var CHECKED_ON3 = "October 25, 2026";
 var CHECKED_ISO3 = "2026-10-25";
 var VERSIONS3 = "Prisma ORM 6.19 \xB7 Next.js 16";
@@ -746,7 +746,7 @@ function scoreError3(e, raw) {
   return s;
 }
 
-// src/lib/stripe-webhook-errors.ts
+// ../vibeboot-site/src/lib/stripe-webhook-errors.ts
 var CHECKED_ON4 = "October 26, 2026";
 var CHECKED_ISO4 = "2026-10-26";
 var VERSIONS4 = "stripe-node 23.0.0 \xB7 Next.js 16.4.3 App Router";
@@ -1027,7 +1027,7 @@ function scoreError4(e, raw) {
   return s;
 }
 
-// src/lib/env-leaks.ts
+// ../vibeboot-site/src/lib/env-leaks.ts
 var PUBLIC_PREFIXES = [
   { prefix: "NEXT_PUBLIC_", fw: "Next.js" },
   { prefix: "VITE_", fw: "Vite" },
@@ -1192,7 +1192,7 @@ function analyze(text) {
   };
 }
 
-// src/lib/middleware-to-proxy.ts
+// ../vibeboot-site/src/lib/middleware-to-proxy.ts
 function convert(src) {
   const changes = [];
   let out2 = src.replace(/\r\n/g, "\n");
@@ -1274,7 +1274,7 @@ function convert(src) {
   return { output: out2, changes };
 }
 
-// src/lib/fixer-meta.ts
+// ../vibeboot-site/src/lib/fixer-meta.ts
 var ruleHref = (file) => `/tools/cursor-rules-pack#rule-${file.replace(/\.(mdc|md)$/, "")}`;
 var APP = "nextjs-app-router.mdc";
 var WF = "00-workflow.mdc";
@@ -1351,7 +1351,7 @@ var VERIFIED_ON = {
   nextjs: { "version-pinning": { on: "October 27, 2026", iso: "2026-10-27" } }
 };
 
-// src/lib/doctor.ts
+// ../vibeboot-site/src/lib/doctor.ts
 var FIXER = {
   nextjs: { href: "/tools/nextjs-error-fixer", label: "Next.js error fixer", cta: "nextjs-error-fixer", versions: VERSIONS, on: CHECKED_ON, iso: CHECKED_ISO },
   authjs: { href: "/tools/authjs-error-fixer", label: "Auth.js error fixer", cta: "authjs-error-fixer", versions: VERSIONS2, on: CHECKED_ON2, iso: CHECKED_ISO2 },
@@ -1460,8 +1460,13 @@ function checkPackageJson(text) {
           cta: FIXER.nextjs.cta
         });
       } else {
-        if (cmp(v, [16, 4, 3]) < 0)
-          out2.push({ severity: "info", title: `${show("next", spec)} is older than 16.4.3`, detail: `The Next.js fixes here are verified on ${VERSIONS}. Most apply to every 16.x release.`, link: { href: FIXER.nextjs.href, label: "Next.js error fixer" } });
+        if (cmp(v, [16, 4, 5]) < 0)
+          out2.push({
+            severity: "warn",
+            title: `${show("next", spec)} is older than 16.4.5, the Nov 3, 2026 security release`,
+            detail: `Next.js 16.4.5 fixes 7 moderate advisories, including cross-user disclosure and cache poisoning in 'use cache', an SVG bypass in image optimization and an HttpOnly cookie exposure on Edge runtime routes. Check what's installed with npm ls next, then upgrade: npm install next@16.4.5 eslint-config-next@16.4.5, build, run your tests and commit package-lock.json. (The fixes here are verified on ${VERSIONS}; they apply to 16.4.5 too.)`,
+            link: { href: "https://github.com/vercel/next.js/releases/tag/v16.4.5", label: "Next.js v16.4.5 release notes" }
+          });
         const mw = entryById("nextjs", "middleware-to-proxy");
         out2.push({
           severity: "info",
@@ -1592,10 +1597,10 @@ function checkMiddleware(text) {
   return convert(text);
 }
 
-// ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.0";
+// src/cli.ts
+var VERSION = "0.1.1";
 var SITE = "https://vibeboot.dev";
-var ref = (p) => `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
+var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
 var tty = process.stdout.isTTY && !process.env.NO_COLOR;
 var c = (code) => (s) => tty ? `\x1B[${code}m${s}\x1B[0m` : s;

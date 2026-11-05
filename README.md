@@ -33,7 +33,7 @@ Exit code is `1` when it finds a leak (or no error match), so you can drop it in
 
 ## Where the fixes come from
 
-Every entry is the same data as the free web tools at [vibeboot.dev/tools/doctor](https://vibeboot.dev/tools/doctor?ref=github), each reproduced and checked against the versions listed in its output (for example Next.js 16.4.3). `bin/vibeboot-doctor.mjs` is a single bundled file; `src/cli.ts` is its entry point.
+Every entry is the same data as the free web tools at [vibeboot.dev/tools/doctor](https://vibeboot.dev/tools/doctor?ref=github), each reproduced and checked against the versions listed in its output (for example Next.js 16.4.5). `bin/vibeboot-doctor.mjs` is a single bundled file; `src/cli.ts` is its entry point.
 
 ## Made by VibeBoot
 

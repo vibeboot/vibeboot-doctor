@@ -6,9 +6,9 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.0";
+const VERSION = "0.1.1";
 const SITE = "https://vibeboot.dev";
-const ref = (p: string) => `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
+const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
 
 const tty = process.stdout.isTTY && !process.env.NO_COLOR;
