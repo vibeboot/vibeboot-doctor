@@ -1,0 +1,25 @@
+# Example workflow consumers can copy into their own repo.
+# Drops vibeboot-doctor onto every pull request and fails the check on a leak.
+# Docs: https://vibeboot.dev/tools/doctor
+name: VibeBoot Doctor
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  doctor:
+    name: Scan for agent mistakes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Composite action from this repo (also usable as vibeboot/vibeboot-doctor@main
+      # from any other repository).
+      - name: Run VibeBoot Doctor
+        uses: ./
+        # Or from another repo:
+        # uses: vibeboot/vibeboot-doctor@main
+        # with:
+        #   json: "false"

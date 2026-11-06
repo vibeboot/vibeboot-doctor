@@ -1,0 +1,33 @@
+name: VibeBoot Doctor
+description: >-
+  Scan a Next.js checkout for the mistakes AI coding agents make most:
+  leaked env keys, middleware.ts on Next.js 16, unpinned next, Prisma generate,
+  Auth.js v4/v5 mixups. Free, MIT, no secrets required. Exits 1 on a leak.
+author: VibeBoot
+branding:
+  icon: shield
+  color: green
+
+inputs:
+  json:
+    description: Print machine-readable JSON (--json)
+    required: false
+    default: "false"
+  working-directory:
+    description: Directory to scan (defaults to the repo root)
+    required: false
+    default: "."
+
+runs:
+  using: composite
+  steps:
+    - name: Run vibeboot-doctor
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        if [ "${{ inputs.json }}" = "true" ]; then
+          npx --yes github:vibeboot/vibeboot-doctor --json
+        else
+          npx --yes github:vibeboot/vibeboot-doctor
+        fi

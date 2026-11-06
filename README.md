@@ -35,6 +35,26 @@ Exit code is `1` when it finds a leak (or no error match), so you can drop it in
 
 Every entry is the same data as the free web tools at [vibeboot.dev/tools/doctor](https://vibeboot.dev/tools/doctor?ref=github), each reproduced and checked against the versions listed in its output (for example Next.js 16.4.5). `bin/vibeboot-doctor.mjs` is a single bundled file; `src/cli.ts` is its entry point.
 
+## GitHub Action
+
+Drop it into CI so every pull request fails when an agent leaks a secret or writes `middleware.ts` on Next.js 16.
+
+```yaml
+# .github/workflows/vibeboot-doctor.yml
+name: VibeBoot Doctor
+on: pull_request
+jobs:
+  doctor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vibeboot/vibeboot-doctor@main
+```
+
+What it does: checks out the PR, runs `npx github:vibeboot/vibeboot-doctor` on the working tree, and exits `1` on a leak (same as the CLI). Optional `json: "true"` input for machine-readable output. No secrets, no telemetry, MIT.
+
+An example workflow lives at [`.github/workflows/vibeboot-doctor.yml`](.github/workflows/vibeboot-doctor.yml). Full write-up: [vibeboot.dev/tools/doctor](https://vibeboot.dev/tools/doctor?ref=github).
+
 ## Made by VibeBoot
 
 Free and MIT. If you'd rather start from a project where all of this is already handled, the [VibeBoot starters](https://vibeboot.dev/?ref=github#starters) are Next.js 16 + Auth.js + Prisma + Stripe kits with Cursor rules that stop agents re-breaking it.
