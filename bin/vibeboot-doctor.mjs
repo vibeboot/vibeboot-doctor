@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
-// ../vibeboot-site/src/lib/nextjs-errors.ts
+// src/lib/nextjs-errors.ts
 var CHECKED_ON = "October 24, 2026";
 var CHECKED_ISO = "2026-10-24";
 var VERSIONS = "Next.js 16.4.3 \xB7 React 19.3";
@@ -274,7 +274,7 @@ function scoreError(e, raw) {
   return s;
 }
 
-// ../vibeboot-site/src/lib/authjs-errors.ts
+// src/lib/authjs-errors.ts
 var CHECKED_ON2 = "October 27, 2026";
 var CHECKED_ISO2 = "2026-10-27";
 var VERSIONS2 = "next-auth 5.0.0-beta.32 \xB7 @auth/core 0.41.3 \xB7 Next.js 16.4.3";
@@ -474,7 +474,7 @@ function scoreError2(e, raw) {
   return s;
 }
 
-// ../vibeboot-site/src/lib/prisma-errors.ts
+// src/lib/prisma-errors.ts
 var CHECKED_ON3 = "October 25, 2026";
 var CHECKED_ISO3 = "2026-10-25";
 var VERSIONS3 = "Prisma ORM 6.19 \xB7 Next.js 16";
@@ -746,7 +746,7 @@ function scoreError3(e, raw) {
   return s;
 }
 
-// ../vibeboot-site/src/lib/stripe-webhook-errors.ts
+// src/lib/stripe-webhook-errors.ts
 var CHECKED_ON4 = "October 26, 2026";
 var CHECKED_ISO4 = "2026-10-26";
 var VERSIONS4 = "stripe-node 23.0.0 \xB7 Next.js 16.4.3 App Router";
@@ -1027,7 +1027,7 @@ function scoreError4(e, raw) {
   return s;
 }
 
-// ../vibeboot-site/src/lib/env-leaks.ts
+// src/lib/env-leaks.ts
 var PUBLIC_PREFIXES = [
   { prefix: "NEXT_PUBLIC_", fw: "Next.js" },
   { prefix: "VITE_", fw: "Vite" },
@@ -1192,7 +1192,7 @@ function analyze(text) {
   };
 }
 
-// ../vibeboot-site/src/lib/middleware-to-proxy.ts
+// src/lib/middleware-to-proxy.ts
 function convert(src) {
   const changes = [];
   let out2 = src.replace(/\r\n/g, "\n");
@@ -1274,7 +1274,7 @@ function convert(src) {
   return { output: out2, changes };
 }
 
-// ../vibeboot-site/src/lib/fixer-meta.ts
+// src/lib/fixer-meta.ts
 var ruleHref = (file) => `/tools/cursor-rules-pack#rule-${file.replace(/\.(mdc|md)$/, "")}`;
 var APP = "nextjs-app-router.mdc";
 var WF = "00-workflow.mdc";
@@ -1351,7 +1351,7 @@ var VERIFIED_ON = {
   nextjs: { "version-pinning": { on: "October 27, 2026", iso: "2026-10-27" } }
 };
 
-// ../vibeboot-site/src/lib/doctor.ts
+// src/lib/doctor.ts
 var FIXER = {
   nextjs: { href: "/tools/nextjs-error-fixer", label: "Next.js error fixer", cta: "nextjs-error-fixer", versions: VERSIONS, on: CHECKED_ON, iso: CHECKED_ISO },
   authjs: { href: "/tools/authjs-error-fixer", label: "Auth.js error fixer", cta: "authjs-error-fixer", versions: VERSIONS2, on: CHECKED_ON2, iso: CHECKED_ISO2 },
@@ -1597,8 +1597,8 @@ function checkMiddleware(text) {
   return convert(text);
 }
 
-// src/cli.ts
-var VERSION = "0.1.1";
+// ../vibeboot-doctor/src/cli.ts
+var VERSION = "0.1.2";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
@@ -1679,6 +1679,7 @@ function readIf(p) {
   }
 }
 function gitTracked(dir, files) {
+  if (!files.length) return [];
   try {
     const r = execFileSync("git", ["-C", dir, "ls-files", "--", ...files], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     return r.split("\n").filter(Boolean);

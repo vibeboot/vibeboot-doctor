@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.1";
+const VERSION = "0.1.2";
 const SITE = "https://vibeboot.dev";
 const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
@@ -70,6 +70,9 @@ type Finding = { severity: "leak" | "warn" | "info" | "ok"; title: string; detai
 function readIf(p: string) { try { return fs.readFileSync(p, "utf8"); } catch { return null; } }
 
 function gitTracked(dir: string, files: string[]): string[] {
+  // No .env files on disk: nothing to check. (An empty pathspec would make
+  // `git ls-files --` list every tracked file and report them all as leaks.)
+  if (!files.length) return [];
   try {
     const r = execFileSync("git", ["-C", dir, "ls-files", "--", ...files], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     return r.split("\n").filter(Boolean);
