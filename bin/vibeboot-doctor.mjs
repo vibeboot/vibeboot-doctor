@@ -1468,7 +1468,7 @@ function checkPackageJson(text) {
           out2.push({
             severity: "warn",
             title: `${show("next", spec)} is older than 16.4.5, the Nov 3, 2026 security release`,
-            detail: `Next.js 16.4.5 fixes 7 moderate advisories, including cross-user disclosure and cache poisoning in 'use cache', an SVG bypass in image optimization and an HttpOnly cookie exposure on Edge runtime routes. Check what's installed with npm ls next, then upgrade: npm install next@16.4.5 eslint-config-next@16.4.5, build, run your tests and commit package-lock.json. (The fixes here are verified on ${VERSIONS}; they apply to 16.4.5 too.)`,
+            detail: `Next.js 16.4.5 fixes 7 moderate advisories, including cross-user disclosure and cache poisoning in 'use cache', an SVG bypass in image optimization and an HttpOnly cookie exposure on Edge runtime routes. Check what's installed with npm ls next, then upgrade: npm install next@16.4.5 eslint-config-next@16.4.5, build, run your tests and commit package-lock.json. (The fixes here are verified on ${VERSIONS}.)`,
             link: { href: "https://github.com/vercel/next.js/releases/tag/v16.4.5", label: "Next.js v16.4.5 release notes" }
           });
         const mw = entryById("nextjs", "middleware-to-proxy");
@@ -1602,7 +1602,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.3";
+var VERSION = "0.1.4";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
