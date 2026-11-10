@@ -1,10 +1,11 @@
 {
   "name": "vibeboot-doctor",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Checks a Next.js project for the mistakes AI coding agents make most: leaked env keys, middleware.ts on Next.js 16, unpinned versions, Prisma generate, Auth.js v4/v5 mixups. Also matches pasted errors against 70 verified fixes. Offline, no telemetry.",
   "type": "module",
   "bin": { "vibeboot-doctor": "bin/vibeboot-doctor.mjs" },
   "files": ["bin", "README.md", "LICENSE"],
+  "scripts": { "test": "node --test" },
   "engines": { "node": ">=18" },
   "keywords": ["nextjs", "next.js", "cursor", "ai", "doctor", "auth.js", "next-auth", "prisma", "stripe", "env", "lint", "cli"],
   "homepage": "https://vibeboot.dev/tools/doctor?ref=npm",

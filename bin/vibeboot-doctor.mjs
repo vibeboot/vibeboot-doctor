@@ -6,9 +6,9 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 // src/lib/nextjs-errors.ts
-var CHECKED_ON = "October 24, 2026";
-var CHECKED_ISO = "2026-10-24";
-var VERSIONS = "Next.js 16.4.3 \xB7 React 19.3";
+var CHECKED_ON = "November 9, 2026";
+var CHECKED_ISO = "2026-11-09";
+var VERSIONS = "Next.js 16.4.5 \xB7 React 19.3";
 var NEXT_ERRORS = [
   {
     id: "hook-in-server-component",
@@ -181,7 +181,7 @@ Error: Module not found: Can't resolve 'fs'
     where: "silent bug",
     looksLike: `Property 'slug' does not exist on type 'Promise<{ slug: string; }>'.  \xB7  page renders "undefined"`,
     match: ["does not exist on type 'promise<", "params.slug", "params.id", "searchparams.", "params is a promise", "sync-dynamic-apis", "was accessed directly with", "must be unwrapped with"],
-    means: `Since Next.js 15, params and searchParams are Promises. Code from older tutorials reads params.slug directly. In our Next.js 16.4.3 test build that didn't fail at all: the page just rendered "undefined".`,
+    means: `Since Next.js 15, params and searchParams are Promises. Code from older tutorials reads params.slug directly. In our Next.js 16.4.5 test build (and 16.4.3 before it) that didn't fail at all: the page just rendered "undefined".`,
     causes: ["The page is typed { params: { slug: string } } (the old shape), so TypeScript doesn't catch it", "Agents trained on Next.js 13/14 examples", "Same for searchParams, cookies() and headers(): all async now"],
     fix: ["Type params as a Promise and await it in Server Components", "In a Client Component, unwrap it with React's use(params)", "Search the codebase for params. and searchParams. without an await"],
     code: { file: "src/app/blog/[slug]/page.tsx", body: "export default async function Page({\n  params,\n}: {\n  params: Promise<{ slug: string }>;\n}) {\n  const { slug } = await params;\n  // \u2026\n}" },
@@ -277,7 +277,7 @@ function scoreError(e, raw) {
 // src/lib/authjs-errors.ts
 var CHECKED_ON2 = "October 27, 2026";
 var CHECKED_ISO2 = "2026-10-27";
-var VERSIONS2 = "next-auth 5.0.0-beta.32 \xB7 @auth/core 0.41.3 \xB7 Next.js 16.4.3";
+var VERSIONS2 = "next-auth 5.0.0-beta.32 \xB7 @auth/core 0.41.3 \xB7 Next.js 16.4.5";
 var AUTH_ERRORS = [
   {
     id: "configuration",
@@ -749,7 +749,7 @@ function scoreError3(e, raw) {
 // src/lib/stripe-webhook-errors.ts
 var CHECKED_ON4 = "October 26, 2026";
 var CHECKED_ISO4 = "2026-10-26";
-var VERSIONS4 = "stripe-node 23.0.0 \xB7 Next.js 16.4.3 App Router";
+var VERSIONS4 = "stripe-node 23.0.0 \xB7 Next.js 16.4.5 App Router";
 var ROUTE = `// src/app/api/stripe/webhook/route.ts
 import Stripe from "stripe";
 
@@ -1005,9 +1005,9 @@ export async function POST(req: Request) {
     quick: "deploy the route to a server/runtime",
     name: "Static export can't run API routes",
     where: "build / deploy",
-    looksLike: 'Error: export const dynamic = "force-static"/ output: export ... route /api/stripe/webhook cannot be exported  \xB7  405 Method Not Allowed',
-    match: ['output: "export"', "output: 'export'", "static export", "next export", "405", "method not allowed", "cannot be exported", "force-static", "github pages", "s3"],
-    means: 'With output: "export" Next.js produces only static files. A POST route handler that verifies signatures needs a server or a function runtime, so on a static host the webhook either fails the build or returns 404/405.',
+    looksLike: 'Error: export const dynamic = "force-static"/export const revalidate not configured on route "/api/stripe/webhook" with "output: export".  \xB7  404 / 405 Method Not Allowed on the static host',
+    match: ['output: "export"', "output: 'export'", "static export", "next export", "405", "method not allowed", "cannot be exported", "not configured on route", "force-static", "github pages", "s3"],
+    means: 'With output: "export" Next.js produces only static files. A POST route handler that verifies signatures needs a server or a function runtime. On Next.js 16.4.5 a POST-only webhook route still builds but is left out of the exported files, so the static host returns 404/405; a route handler that also exports GET fails the build with the error above.',
     causes: ['output: "export" in next.config', "Hosting on a static-only host (GitHub Pages, plain S3, a Pages project with no functions)"],
     fix: ['Remove output: "export" and deploy to a host that runs Next.js (Vercel, Node, Docker, OpenNext on Cloudflare)', "Or keep the site static and run the webhook as a separate function / Worker", "Then register that function's URL in Stripe"],
     prompt: 'My Next.js app uses a static export but needs a Stripe webhook. Explain the options for this repo: drop output: "export" and deploy to a Next.js-capable host, or move the webhook into a separate serverless function / Worker. Recommend one and list the exact changes.',
@@ -1347,8 +1347,12 @@ var STRIPE_VERIFY = {
   "customer-mapping": { lines: [LISTEN, ENV, "stripe trigger checkout.session.completed --add checkout_session:client_reference_id=<test-user-id>", "# the fixture is a one-time payment; also run one subscription checkout in test mode"], expect: "That test user's row gets the Stripe customer id, and a later subscription event finds the same user." },
   "static-export": { lines: PROD, expect: "curl gets 400 from your webhook function instead of 404 or 405, and the resent event shows a 200 delivery." }
 };
+var NOV9 = { on: "November 9, 2026", iso: "2026-11-09" };
 var VERIFIED_ON = {
-  nextjs: { "version-pinning": { on: "October 27, 2026", iso: "2026-10-27" } }
+  // Re-checked on Next.js 16.4.5 on 2026-11-09 (scratch app next build/next start, same results as 16.4.3).
+  // Entries not listed keep their tool's CHECKED date (docs, dashboard, CLI or OAuth-provider checks not re-run).
+  stripe: Object.fromEntries(["no-signatures-found", "redirect-3xx", "unauthorized-401", "not-found-404", "edge-runtime", "missing-raw-body", "timestamp-tolerance", "static-export"].map((id) => [id, NOV9])),
+  authjs: Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9]))
 };
 
 // src/lib/doctor.ts
@@ -1598,7 +1602,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.2";
+var VERSION = "0.1.3";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
@@ -1777,8 +1781,7 @@ async function main() {
     code = errorMode(rest.join(" "), json);
   } else code = projectMode(rest[0] ?? ".", json);
   if (!json) {
-    say(dim("Free and MIT. Want these fixed from day one? The VibeBoot starters ship with them handled, plus Cursor rules that stop agents re-breaking them:"));
-    say(dim(`${SITE}/?ref=cli#starters`));
+    say(dim(`Want these handled from day one? VibeBoot starters (SaaS $49, AI Chatbot $59, one-time): ${SITE}/?ref=doctor-cli#starters`));
     console.log(out.join("\n"));
   }
   return code;

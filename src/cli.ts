@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.2";
+const VERSION = "0.1.3";
 const SITE = "https://vibeboot.dev";
 const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
@@ -161,8 +161,7 @@ async function main() {
     code = errorMode(rest.join(" "), json);
   } else code = projectMode(rest[0] ?? ".", json);
   if (!json) {
-    say(dim("Free and MIT. Want these fixed from day one? The VibeBoot starters ship with them handled, plus Cursor rules that stop agents re-breaking them:"));
-    say(dim(`${SITE}/?ref=cli#starters`));
+    say(dim(`Want these handled from day one? VibeBoot starters (SaaS $49, AI Chatbot $59, one-time): ${SITE}/?ref=doctor-cli#starters`));
     console.log(out.join("\n"));
   }
   return code;
