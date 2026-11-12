@@ -3,10 +3,10 @@
 // No network calls, no telemetry, never prints a secret value (env values are masked).
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.5";
+const VERSION = "0.1.6";
 const SITE = "https://vibeboot.dev";
 const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
@@ -79,6 +79,42 @@ function gitTracked(dir: string, files: string[]): string[] {
   } catch { return []; }
 }
 
+/** Is `dir` inside a git work tree? */
+function inGitRepo(dir: string) {
+  try {
+    return execFileSync("git", ["-C", dir, "rev-parse", "--is-inside-work-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() === "true";
+  } catch { return false; }
+}
+
+/** Env files git would NOT ignore (asks git itself, so nested .gitignore files, negations and globs all count). */
+function gitNotIgnored(dir: string, files: string[]): string[] | null {
+  if (!files.length) return [];
+  try {
+    // check-ignore prints the paths that ARE ignored; exit 1 just means "none of them".
+    const r = spawnSync("git", ["-C", dir, "check-ignore", "--", ...files], { encoding: "utf8" });
+    if (r.status !== 0 && r.status !== 1) return null;
+    const ignored = new Set(r.stdout.split("\n").filter(Boolean));
+    return files.filter((f) => !ignored.has(f));
+  } catch { return null; }
+}
+
+/** No git repo yet: read .gitignore ourselves (last matching line wins, "!" re-includes). Simple globs only. */
+function gitignoreCovers(gitignore: string, file: string) {
+  let ignored = false;
+  for (const raw of gitignore.split(/\r?\n/)) {
+    let line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const negate = line.startsWith("!");
+    if (negate) line = line.slice(1);
+    line = line.replace(/^\//, "").replace(/\/$/, "");
+    if (line.includes("/") && !line.startsWith("**/")) continue; // a path in a subfolder, not the root .env
+    line = line.replace(/^\*\*\//, "");
+    const re = new RegExp("^" + line.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+    if (re.test(file)) ignored = !negate;
+  }
+  return ignored;
+}
+
 function projectMode(dir: string, json: boolean) {
   const abs = path.resolve(dir);
   const pkgText = readIf(path.join(abs, "package.json"));
@@ -104,8 +140,11 @@ function projectMode(dir: string, json: boolean) {
   if (tracked.length)
     findings.push({ severity: "leak", title: `Committed to git: ${tracked.join(", ")}`, detail: "Anyone with the repo can read these values. Remove the file from git, add .env* to .gitignore, and rotate every key that was in it (it stays in git history).", fix: [`git rm --cached ${tracked.join(" ")}`, "echo '.env*' >> .gitignore  (keep .env.example if you have one: add !.env.example)", "Rotate the keys in each provider's dashboard"], url: ref("/tools/env-leak-checker") });
   else if (envNames.length) {
-    const gi = readIf(path.join(abs, ".gitignore")) ?? "";
-    if (!/^\s*\/?\.env/m.test(gi)) findings.push({ severity: "warn", title: ".gitignore doesn't mention .env files", detail: `Found ${envNames.join(", ")} but no .env rule in .gitignore, so one git add . would commit your secrets.`, fix: ["Add .env* to .gitignore (and !.env.example to keep the example)"], file: ".gitignore", url: ref("/tools/env-leak-checker") });
+    // Ask git when we can: a rule like ".env*.local" (the old create-next-app default) mentions .env but
+    // doesn't cover .env itself, so the next git add . would still commit it.
+    const exposed = (inGitRepo(abs) ? gitNotIgnored(abs, envNames) : null)
+      ?? envNames.filter((n) => !gitignoreCovers(readIf(path.join(abs, ".gitignore")) ?? "", n));
+    if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.join(", ")} ${exposed.length === 1 ? "isn't" : "aren't"} ignored by git, so one git add . would commit your secrets.${exposed.includes(".env") ? " A rule like .env*.local only covers the .local files." : ""}`, fix: ["Add .env* to .gitignore (and !.env.example to keep the example)", "Check with: git check-ignore -v .env"], file: ".gitignore", url: ref("/tools/env-leak-checker") });
   }
 
   // middleware.ts on Next.js 16

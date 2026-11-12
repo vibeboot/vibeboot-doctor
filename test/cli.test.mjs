@@ -87,3 +87,26 @@ test("MissingSecret advice never tells people to run npx auth secret", () => {
   assert.doesNotMatch(r.stdout, /Generate one: npx auth secret/);
   assert.doesNotMatch(r.stdout, /paste-the-output-of-npx-auth-secret/);
 });
+
+test(".env not covered by .gitignore is a WARN (asks git; .env*.local only covers .local files)", () => {
+  const env = { "package.json": PKG, ".env": "DATABASE_URL=file:./dev.db\n" };
+  const cases = [
+    { gi: ".env*.local\n", git: true, warn: true },
+    { gi: ".env*.local\n", git: false, warn: true },
+    { gi: ".env*\n!.env\n", git: true, warn: true },
+    { gi: ".env*\n!.env\n", git: false, warn: true },
+    { gi: ".env*\n!.env.example\n", git: true, warn: false },
+    { gi: "/.env\n", git: false, warn: false },
+    { gi: "**/.env\n", git: false, warn: false },
+    { gi: ".env\n", git: true, warn: false },
+  ];
+  for (const { gi, git, warn } of cases) {
+    const dir = project({ ...env, ".gitignore": gi });
+    if (git) execFileSync("git", ["-C", dir, "init", "-q"], { stdio: "ignore" });
+    const r = run([dir]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    const label = `${JSON.stringify(gi)} git=${git}`;
+    if (warn) assert.match(r.stdout, /WARN\s+\.gitignore doesn't cover \.env/, label);
+    else assert.doesNotMatch(r.stdout, /gitignore doesn't cover/, label);
+  }
+});

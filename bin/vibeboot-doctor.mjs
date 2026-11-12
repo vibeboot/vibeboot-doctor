@@ -3,7 +3,7 @@
 // ../vibeboot-doctor/src/cli.ts
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 
 // src/lib/nextjs-errors.ts
 var CHECKED_ON = "November 9, 2026";
@@ -1607,7 +1607,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.5";
+var VERSION = "0.1.6";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
@@ -1696,6 +1696,39 @@ function gitTracked(dir, files) {
     return [];
   }
 }
+function inGitRepo(dir) {
+  try {
+    return execFileSync("git", ["-C", dir, "rev-parse", "--is-inside-work-tree"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim() === "true";
+  } catch {
+    return false;
+  }
+}
+function gitNotIgnored(dir, files) {
+  if (!files.length) return [];
+  try {
+    const r = spawnSync("git", ["-C", dir, "check-ignore", "--", ...files], { encoding: "utf8" });
+    if (r.status !== 0 && r.status !== 1) return null;
+    const ignored = new Set(r.stdout.split("\n").filter(Boolean));
+    return files.filter((f) => !ignored.has(f));
+  } catch {
+    return null;
+  }
+}
+function gitignoreCovers(gitignore, file) {
+  let ignored = false;
+  for (const raw of gitignore.split(/\r?\n/)) {
+    let line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const negate = line.startsWith("!");
+    if (negate) line = line.slice(1);
+    line = line.replace(/^\//, "").replace(/\/$/, "");
+    if (line.includes("/") && !line.startsWith("**/")) continue;
+    line = line.replace(/^\*\*\//, "");
+    const re = new RegExp("^" + line.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+    if (re.test(file)) ignored = !negate;
+  }
+  return ignored;
+}
 function projectMode(dir, json) {
   const abs = path.resolve(dir);
   const pkgText = readIf(path.join(abs, "package.json"));
@@ -1724,8 +1757,8 @@ function projectMode(dir, json) {
   if (tracked.length)
     findings.push({ severity: "leak", title: `Committed to git: ${tracked.join(", ")}`, detail: "Anyone with the repo can read these values. Remove the file from git, add .env* to .gitignore, and rotate every key that was in it (it stays in git history).", fix: [`git rm --cached ${tracked.join(" ")}`, "echo '.env*' >> .gitignore  (keep .env.example if you have one: add !.env.example)", "Rotate the keys in each provider's dashboard"], url: ref("/tools/env-leak-checker") });
   else if (envNames.length) {
-    const gi = readIf(path.join(abs, ".gitignore")) ?? "";
-    if (!/^\s*\/?\.env/m.test(gi)) findings.push({ severity: "warn", title: ".gitignore doesn't mention .env files", detail: `Found ${envNames.join(", ")} but no .env rule in .gitignore, so one git add . would commit your secrets.`, fix: ["Add .env* to .gitignore (and !.env.example to keep the example)"], file: ".gitignore", url: ref("/tools/env-leak-checker") });
+    const exposed = (inGitRepo(abs) ? gitNotIgnored(abs, envNames) : null) ?? envNames.filter((n2) => !gitignoreCovers(readIf(path.join(abs, ".gitignore")) ?? "", n2));
+    if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.join(", ")} ${exposed.length === 1 ? "isn't" : "aren't"} ignored by git, so one git add . would commit your secrets.${exposed.includes(".env") ? " A rule like .env*.local only covers the .local files." : ""}`, fix: ["Add .env* to .gitignore (and !.env.example to keep the example)", "Check with: git check-ignore -v .env"], file: ".gitignore", url: ref("/tools/env-leak-checker") });
   }
   for (const n2 of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
     const t = readIf(path.join(abs, n2));
