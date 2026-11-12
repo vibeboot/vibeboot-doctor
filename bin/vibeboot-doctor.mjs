@@ -299,8 +299,8 @@ var AUTH_ERRORS = [
     match: ["missingsecret", "please define a `secret`", "please define a secret", "auth_secret"],
     means: "Auth.js has no secret to encrypt cookies and tokens with. It reads AUTH_SECRET (or AUTH_SECRET_1, _2, _3 for rotation). next-auth v5 still falls back to the old NEXTAUTH_SECRET.",
     causes: ["AUTH_SECRET is in .env.local but not in your host's environment variables", "The variable was added after the last deploy, so the running build doesn't see it", "A typo like AUTH_SECRETS or NEXT_PUBLIC_AUTH_SECRET"],
-    fix: ["Generate one: npx auth secret (or openssl rand -base64 33)", "Add AUTH_SECRET to the production environment on your host", "Redeploy so the new value is picked up", "Never prefix it with NEXT_PUBLIC_: that ships it to the browser"],
-    code: { file: ".env.local", body: '# at least 32 random characters\nAUTH_SECRET="paste-the-output-of-npx-auth-secret"' },
+    fix: ["Generate one: openssl rand -base64 32 (npx auth secret no longer works: the npm auth package is now a different CLI)", "Add AUTH_SECRET to the production environment on your host", "Redeploy so the new value is picked up", "Never prefix it with NEXT_PUBLIC_: that ships it to the browser"],
+    code: { file: ".env.local", body: '# at least 32 random characters\nAUTH_SECRET="paste-the-output-of-openssl-rand-base64-32"' },
     prompt: "Auth.js throws MissingSecret in production. Check which env vars my auth.ts reads, confirm AUTH_SECRET is set for the production environment on my host (not only in .env.local), and make sure it is never exposed with a NEXT_PUBLIC_ prefix.",
     prodOnly: true
   },
@@ -1112,6 +1112,7 @@ function leakPrompt(key, prefix) {
   const s = serverName(key, prefix);
   return `${key} is a secret but its ${prefix} prefix puts it in the browser bundle. Rename it to ${s} in every .env file and on the host, read process.env.${s} only in server code (route handlers, server actions, server components) and add import "server-only" to the module that reads it. If a client component needs the result, call a server route instead of passing the key. Don't add the prefix back to make an error go away.`;
 }
+var AUTH_SECRET_PLACEHOLDER = /replace|change|your|xxx|example|placeholder|paste|^(secret|supersecret|password|test|dev)$/i;
 function analyze(text) {
   const vars = parseEnv(text);
   const findings = [];
@@ -1158,8 +1159,12 @@ function analyze(text) {
       findings.push({ key, line, masked, severity: "warn", title: "Publishable key where a secret should be", detail: `${key} holds a ${publicVal.what}. Server calls that need the secret key will fail with an authentication error.`, fix: "Paste the secret key (sk_\u2026) here instead." });
       continue;
     }
-    if ((key === "AUTH_SECRET" || key === "NEXTAUTH_SECRET") && value && value.length < 32 && !/replace|change|your|xxx/i.test(value)) {
-      findings.push({ key, line, masked, severity: "warn", title: "Short auth secret", detail: `${value.length} characters. Auth.js signs and encrypts sessions with it, so use a long random value.`, fix: "Generate one with npx auth secret (or openssl rand -base64 33)." });
+    if ((key === "AUTH_SECRET" || key === "NEXTAUTH_SECRET") && value && AUTH_SECRET_PLACEHOLDER.test(value)) {
+      findings.push({ key, line, masked, severity: "warn", title: "Placeholder auth secret", detail: "This looks like the example value from a template or guide, not a random secret. Anyone who has seen that example can forge session cookies for your app.", fix: "Generate one with openssl rand -base64 32 and paste it in. Do the same in your host's production env vars." });
+      continue;
+    }
+    if ((key === "AUTH_SECRET" || key === "NEXTAUTH_SECRET") && value && value.length < 32) {
+      findings.push({ key, line, masked, severity: "warn", title: "Short auth secret", detail: `${value.length} characters. Auth.js signs and encrypts sessions with it, so use a long random value.`, fix: "Generate one with openssl rand -base64 32." });
       continue;
     }
     if ((key === "NEXTAUTH_URL" || key === "AUTH_URL") && /localhost|127\.0\.0\.1/.test(value)) {
@@ -1602,7 +1607,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.4";
+var VERSION = "0.1.5";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);

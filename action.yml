@@ -24,10 +24,12 @@ runs:
     - name: Run vibeboot-doctor
       shell: bash
       working-directory: ${{ inputs.working-directory }}
+      env:
+        VIBEBOOT_DOCTOR_JSON: ${{ inputs.json }}
       run: |
         set -euo pipefail
-        if [ "${{ inputs.json }}" = "true" ]; then
-          npx --yes github:vibeboot/vibeboot-doctor --json
+        if [ "$VIBEBOOT_DOCTOR_JSON" = "true" ]; then
+          node "$GITHUB_ACTION_PATH/bin/vibeboot-doctor.mjs" --json
         else
-          npx --yes github:vibeboot/vibeboot-doctor
+          node "$GITHUB_ACTION_PATH/bin/vibeboot-doctor.mjs"
         fi

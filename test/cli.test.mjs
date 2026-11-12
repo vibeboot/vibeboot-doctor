@@ -62,3 +62,28 @@ test("--json output stays pure JSON (no closing line)", () => {
   assert.equal(j.mode, "project");
   assert.doesNotMatch(r.stdout, /ref=doctor-cli/);
 });
+
+test("placeholder AUTH_SECRET from a template is a WARN, value masked", () => {
+  for (const v of ["replace-with-a-long-random-string", "changeme", "your-secret-here", "paste-the-output-of-npx-auth-secret"]) {
+    const dir = project({ "package.json": PKG, ".gitignore": ".env*\n", ".env": `AUTH_SECRET="${v}"\n` });
+    const r = run([dir]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /WARN\s+\.env:1 AUTH_SECRET/, v);
+    assert.match(r.stdout, /Placeholder auth secret/, v);
+    assert.match(r.stdout, /openssl rand -base64 32/, v);
+  }
+});
+
+test("a real random AUTH_SECRET is not flagged", () => {
+  const dir = project({ "package.json": PKG, ".gitignore": ".env*\n", ".env": 'AUTH_SECRET="k3Jq9vB7wZ2mN8pL4tR6yU1oI5aS0dFgH7jK2lQ9xC4="\n' });
+  const r = run([dir]);
+  assert.equal(r.status, 0);
+  assert.doesNotMatch(r.stdout, /AUTH_SECRET/);
+});
+
+test("MissingSecret advice never tells people to run npx auth secret", () => {
+  const r = run(["[auth][error] MissingSecret: Please define a `secret`"]);
+  assert.match(r.stdout, /openssl rand -base64 32/);
+  assert.doesNotMatch(r.stdout, /Generate one: npx auth secret/);
+  assert.doesNotMatch(r.stdout, /paste-the-output-of-npx-auth-secret/);
+});
