@@ -48,10 +48,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: vibeboot/vibeboot-doctor@main
+      - uses: vibeboot/vibeboot-doctor@0a3e5aa92d4e9b7b97ac890b6ee8830d641f89a1 # v0.1.6
 ```
 
-What it does: checks out the PR, runs `npx github:vibeboot/vibeboot-doctor` on the working tree, and exits `1` on a leak (same as the CLI). Optional `json: "true"` input for machine-readable output. No secrets, no telemetry, MIT.
+The example pins a full commit SHA, so a new Doctor version never changes your CI until you bump it. To update, swap in the SHA of a newer commit from the [commit list](https://github.com/vibeboot/vibeboot-doctor/commits/main). If you'd rather always run the latest, use `@main`.
+
+What it does: checks out the PR, runs the bundled `bin/vibeboot-doctor.mjs` from the exact ref you pinned (no npx fetch) on the working tree, and exits `1` on a leak (same as the CLI). Optional `json: "true"` input for machine-readable output. No secrets, no telemetry, MIT.
 
 An example workflow lives at [`.github/workflows/vibeboot-doctor.yml`](.github/workflows/vibeboot-doctor.yml). Full write-up: [vibeboot.dev/tools/doctor](https://vibeboot.dev/tools/doctor?ref=github).
 
