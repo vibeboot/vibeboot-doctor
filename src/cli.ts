@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.6";
+const VERSION = "0.1.7";
 const SITE = "https://vibeboot.dev";
 const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
@@ -98,19 +98,29 @@ function gitNotIgnored(dir: string, files: string[]): string[] | null {
   } catch { return null; }
 }
 
-/** No git repo yet: read .gitignore ourselves (last matching line wins, "!" re-includes). Simple globs only. */
+/**
+ * No git repo yet: read .gitignore ourselves (last matching line wins, "!" re-includes). Simple globs only.
+ * A pattern without a slash matches a file or folder name at any depth; one with a slash matches the path from
+ * the root; a trailing slash only matches folders. `file` is relative to the project root, e.g. ".claude/x.json".
+ */
 function gitignoreCovers(gitignore: string, file: string) {
+  const parts = file.split("/");
   let ignored = false;
   for (const raw of gitignore.split(/\r?\n/)) {
     let line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const negate = line.startsWith("!");
     if (negate) line = line.slice(1);
-    line = line.replace(/^\//, "").replace(/\/$/, "");
-    if (line.includes("/") && !line.startsWith("**/")) continue; // a path in a subfolder, not the root .env
-    line = line.replace(/^\*\*\//, "");
-    const re = new RegExp("^" + line.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
-    if (re.test(file)) ignored = !negate;
+    const dirOnly = line.endsWith("/");
+    line = line.replace(/^\//, "").replace(/\/$/, "").replace(/^\*\*\//, "");
+    const anchored = line.includes("/");
+    const re = new RegExp("^" + line.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\u0000").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*").replace(/\?/g, "[^/]") + "$");
+    // Every folder on the way to the file, then the file itself: ignoring a folder ignores what's inside it.
+    const hit = parts.some((_, i) => {
+      if (dirOnly && i === parts.length - 1) return false;
+      return re.test(anchored ? parts.slice(0, i + 1).join("/") : parts[i]);
+    });
+    if (hit) ignored = !negate;
   }
   return ignored;
 }
@@ -145,6 +155,19 @@ function projectMode(dir: string, json: boolean) {
     const exposed = (inGitRepo(abs) ? gitNotIgnored(abs, envNames) : null)
       ?? envNames.filter((n) => !gitignoreCovers(readIf(path.join(abs, ".gitignore")) ?? "", n));
     if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.join(", ")} ${exposed.length === 1 ? "isn't" : "aren't"} ignored by git, so one git add . would commit your secrets.${exposed.includes(".env") ? " A rule like .env*.local only covers the .local files." : ""}`, fix: ["Add .env* to .gitignore (and !.env.example to keep the example)", "Check with: git check-ignore -v .env"], file: ".gitignore", url: ref("/tools/env-leak-checker") });
+  }
+
+  // Personal Claude Code files. CLAUDE.md setups (ours included) put personal overrides in .claude/settings.local.json
+  // and personal notes in CLAUDE.local.md. Claude Code only gitignores settings.local.json when it creates the file
+  // itself, so a hand-made one (or CLAUDE.local.md) goes out with the next git add .
+  const personal = [".claude/settings.local.json", "CLAUDE.local.md"].filter((n) => fs.existsSync(path.join(abs, n)));
+  const personalTracked = gitTracked(abs, personal);
+  if (personalTracked.length)
+    findings.push({ severity: "warn", title: `Personal Claude Code file committed: ${personalTracked.join(", ")}`, detail: "These hold your own permissions, allowed commands and notes, not team rules, so they don't belong in the repo (allowed commands can include tokens or private paths). Teammates also get your overrides.", fix: [`git rm --cached ${personalTracked.join(" ")}`, `Add ${personalTracked.join(" and ")} to .gitignore`, "Shared rules go in AGENTS.md or .claude/settings.json instead"], file: ".gitignore" });
+  else if (personal.length) {
+    const exposed = (inGitRepo(abs) ? gitNotIgnored(abs, personal) : null)
+      ?? personal.filter((n) => !gitignoreCovers(readIf(path.join(abs, ".gitignore")) ?? "", n));
+    if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.length === 1 ? "This is a personal Claude Code file" : "These are personal Claude Code files"} (your own permissions, allowed commands or notes), so one git add . would commit ${exposed.length === 1 ? "it" : "them"} for everyone.`, fix: [`Add ${exposed.join(" and ")} to .gitignore`, `Check with: git check-ignore -v ${exposed[0]}`], file: ".gitignore" });
   }
 
   // middleware.ts on Next.js 16

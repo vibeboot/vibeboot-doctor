@@ -1,6 +1,6 @@
 # vibeboot-doctor
 
-Checks a Next.js project for the mistakes AI coding agents make most, and matches pasted errors against 70 verified fixes for Next.js, Auth.js, Prisma and Stripe webhooks.
+Checks a Next.js project for the mistakes AI coding agents make most, and matches pasted errors against 71 verified fixes for Next.js, Auth.js, Prisma and Stripe webhooks.
 
 ```bash
 # in your project folder
@@ -21,6 +21,7 @@ Node 18 or newer. No dependencies. It runs offline, uploads nothing, and never p
 | --- | --- |
 | Secret keys behind `NEXT_PUBLIC_` (Stripe, OpenAI, Anthropic, database URLs and more) in your `.env*` files | Next.js ships every `NEXT_PUBLIC_` value to the browser |
 | `.env` files committed to git, or missing from `.gitignore` | One `git add .` and your keys are public |
+| Personal Claude Code files (`.claude/settings.local.json`, `CLAUDE.local.md`) committed or not in `.gitignore` | They hold your own allowed commands and notes, not team rules |
 | `middleware.ts` on Next.js 16 | Renamed to `proxy.ts`; agents keep writing the old file |
 | `next` as a range or `latest`, and `next` / `eslint-config-next` drift | Each install can build against a different Next.js |
 | NextAuth v4 vs Auth.js v5 (and the v4 Prisma adapter) | Agents mix the two APIs |

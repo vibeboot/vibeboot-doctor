@@ -333,6 +333,20 @@ var AUTH_ERRORS = [
     prodOnly: true
   },
   {
+    id: "google-redirect-uri",
+    quick: "add the prod callback URL to your Google client",
+    name: "Google: Error 400 redirect_uri_mismatch",
+    where: "Google page",
+    looksLike: "Access blocked: This app's request is invalid \xB7 Error 400: redirect_uri_mismatch",
+    match: ["error 400: redirect_uri_mismatch", "access blocked: this app's request is invalid", "accounts.google.com", "callback/google", "google", "redirect_uri_mismatch"],
+    means: "The redirect_uri Auth.js sent to Google isn't in the Authorized redirect URIs list on the OAuth client your app uses. Google compares the whole string: scheme, host, port, path, case and trailing slash all have to match. Unlike a GitHub OAuth app, one Google client can hold several URIs, so localhost and production can share it.",
+    causes: ["Only the localhost callback URL was added to the client, never the production one", "http vs https, www vs no www, or a trailing slash", "The URI was added to a different OAuth client than the AUTH_GOOGLE_ID in production", "A preview deployment URL. Google doesn't allow wildcards, so *.vercel.app can't be registered", "The change was saved a few minutes ago. Google says it can take 5 minutes to a few hours to apply"],
+    fix: ["Open the request details on Google's error page (or the redirect_uri= value in the address bar) and copy the exact redirect_uri", "In Google Cloud console go to Google Auth Platform > Clients (older menus: APIs & Services > Credentials) and open the Web client whose ID matches AUTH_GOOGLE_ID", "Under Authorized redirect URIs add your production callback URL (your domain plus /api/auth/callback/google), keep the localhost one, and save", "Make sure production has AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET from that same client", "For previews, Auth.js supports a stable redirect proxy via AUTH_REDIRECT_PROXY_URL", "Wait a few minutes, then retry in a private window"],
+    code: { file: "Google OAuth client (Web application)", body: "Authorized redirect URIs\nhttp://localhost:3000/api/auth/callback/google\nhttps://your-domain.com/api/auth/callback/google" },
+    prompt: "Google sign-in fails in production with Error 400: redirect_uri_mismatch. Tell me the exact callback URL my app sends to Google (base path /api/auth, provider google) for my production domain, check that production sets AUTH_GOOGLE_ID and AUTH_GOOGLE_SECRET, and check nothing adds a trailing slash or forces http.",
+    prodOnly: true
+  },
+  {
     id: "localhost-redirect",
     quick: "delete AUTH_URL / NEXTAUTH_URL in prod",
     name: "Redirected to localhost after deploy",
@@ -1353,11 +1367,12 @@ var STRIPE_VERIFY = {
   "static-export": { lines: PROD, expect: "curl gets 400 from your webhook function instead of 404 or 405, and the resent event shows a 200 delivery." }
 };
 var NOV9 = { on: "November 9, 2026", iso: "2026-11-09" };
+var NOV12 = { on: "November 12, 2026", iso: "2026-11-12" };
 var VERIFIED_ON = {
   // Re-checked on Next.js 16.4.5 on 2026-11-09 (scratch app next build/next start, same results as 16.4.3).
   // Entries not listed keep their tool's CHECKED date (docs, dashboard, CLI or OAuth-provider checks not re-run).
   stripe: Object.fromEntries(["no-signatures-found", "redirect-3xx", "unauthorized-401", "not-found-404", "edge-runtime", "missing-raw-body", "timestamp-tolerance", "static-export"].map((id) => [id, NOV9])),
-  authjs: Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9]))
+  authjs: { ...Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9])), "google-redirect-uri": NOV12 }
 };
 
 // src/lib/doctor.ts
@@ -1607,7 +1622,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.6";
+var VERSION = "0.1.7";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
@@ -1715,17 +1730,22 @@ function gitNotIgnored(dir, files) {
   }
 }
 function gitignoreCovers(gitignore, file) {
+  const parts = file.split("/");
   let ignored = false;
   for (const raw of gitignore.split(/\r?\n/)) {
     let line = raw.trim();
     if (!line || line.startsWith("#")) continue;
     const negate = line.startsWith("!");
     if (negate) line = line.slice(1);
-    line = line.replace(/^\//, "").replace(/\/$/, "");
-    if (line.includes("/") && !line.startsWith("**/")) continue;
-    line = line.replace(/^\*\*\//, "");
-    const re = new RegExp("^" + line.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
-    if (re.test(file)) ignored = !negate;
+    const dirOnly = line.endsWith("/");
+    line = line.replace(/^\//, "").replace(/\/$/, "").replace(/^\*\*\//, "");
+    const anchored = line.includes("/");
+    const re = new RegExp("^" + line.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*/g, "\0").replace(/\*/g, "[^/]*").replace(/\u0000/g, ".*").replace(/\?/g, "[^/]") + "$");
+    const hit = parts.some((_, i) => {
+      if (dirOnly && i === parts.length - 1) return false;
+      return re.test(anchored ? parts.slice(0, i + 1).join("/") : parts[i]);
+    });
+    if (hit) ignored = !negate;
   }
   return ignored;
 }
@@ -1759,6 +1779,14 @@ function projectMode(dir, json) {
   else if (envNames.length) {
     const exposed = (inGitRepo(abs) ? gitNotIgnored(abs, envNames) : null) ?? envNames.filter((n2) => !gitignoreCovers(readIf(path.join(abs, ".gitignore")) ?? "", n2));
     if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.join(", ")} ${exposed.length === 1 ? "isn't" : "aren't"} ignored by git, so one git add . would commit your secrets.${exposed.includes(".env") ? " A rule like .env*.local only covers the .local files." : ""}`, fix: ["Add .env* to .gitignore (and !.env.example to keep the example)", "Check with: git check-ignore -v .env"], file: ".gitignore", url: ref("/tools/env-leak-checker") });
+  }
+  const personal = [".claude/settings.local.json", "CLAUDE.local.md"].filter((n2) => fs.existsSync(path.join(abs, n2)));
+  const personalTracked = gitTracked(abs, personal);
+  if (personalTracked.length)
+    findings.push({ severity: "warn", title: `Personal Claude Code file committed: ${personalTracked.join(", ")}`, detail: "These hold your own permissions, allowed commands and notes, not team rules, so they don't belong in the repo (allowed commands can include tokens or private paths). Teammates also get your overrides.", fix: [`git rm --cached ${personalTracked.join(" ")}`, `Add ${personalTracked.join(" and ")} to .gitignore`, "Shared rules go in AGENTS.md or .claude/settings.json instead"], file: ".gitignore" });
+  else if (personal.length) {
+    const exposed = (inGitRepo(abs) ? gitNotIgnored(abs, personal) : null) ?? personal.filter((n2) => !gitignoreCovers(readIf(path.join(abs, ".gitignore")) ?? "", n2));
+    if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.length === 1 ? "This is a personal Claude Code file" : "These are personal Claude Code files"} (your own permissions, allowed commands or notes), so one git add . would commit ${exposed.length === 1 ? "it" : "them"} for everyone.`, fix: [`Add ${exposed.join(" and ")} to .gitignore`, `Check with: git check-ignore -v ${exposed[0]}`], file: ".gitignore" });
   }
   for (const n2 of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
     const t = readIf(path.join(abs, n2));

@@ -110,3 +110,52 @@ test(".env not covered by .gitignore is a WARN (asks git; .env*.local only cover
     else assert.doesNotMatch(r.stdout, /gitignore doesn't cover/, label);
   }
 });
+
+test("a Google redirect_uri_mismatch error matches the Google fix, not the GitHub one", () => {
+  const r = run(["Access blocked: This app's request is invalid. Error 400: redirect_uri_mismatch"]);
+  assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stdout, /1\. Google: Error 400 redirect_uri_mismatch/);
+  assert.match(r.stdout, /fix\/authjs\/google-redirect-uri/);
+});
+
+function nested(files, { git = false, add = [] } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vbd-"));
+  for (const [n, c] of Object.entries(files)) { fs.mkdirSync(path.dirname(path.join(dir, n)), { recursive: true }); fs.writeFileSync(path.join(dir, n), c); }
+  if (git) {
+    const g = (...a) => execFileSync("git", ["-C", dir, ...a], { stdio: "ignore" });
+    g("init", "-q"); g("add", "-A"); for (const f of add) g("add", "-f", f);
+    g("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init");
+  }
+  return dir;
+}
+const LOCAL = { ".claude/settings.local.json": '{"permissions":{"allow":["Bash(npm test)"]}}\n', "CLAUDE.local.md": "my notes\n" };
+
+test("personal Claude Code files that git would commit are a WARN (git repo and no-git fallback)", () => {
+  for (const git of [true, false]) {
+    const dir = nested({ "package.json": PKG, ".gitignore": "node_modules\n", ...LOCAL });
+    if (git) execFileSync("git", ["-C", dir, "init", "-q"], { stdio: "ignore" });
+    const r = run([dir]);
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /WARN\s+\.gitignore doesn't cover \.claude\/settings\.local\.json, CLAUDE\.local\.md/, `git=${git}`);
+  }
+});
+
+test("personal Claude Code files covered by .gitignore are not flagged (exact paths, a .claude/ folder rule, a name rule)", () => {
+  for (const gi of [".claude/settings.local.json\nCLAUDE.local.md\n", ".claude/\n*.local.md\n", "settings.local.json\n/CLAUDE.local.md\n"]) {
+    for (const git of [true, false]) {
+      const dir = nested({ "package.json": PKG, ".gitignore": gi, ...LOCAL });
+      if (git) execFileSync("git", ["-C", dir, "init", "-q"], { stdio: "ignore" });
+      const r = run([dir]);
+      assert.doesNotMatch(r.stdout, /Claude Code file/, `${JSON.stringify(gi)} git=${git}`);
+    }
+  }
+});
+
+test("a committed personal Claude Code file is a WARN with the git rm --cached fix, not a LEAK", () => {
+  const dir = nested({ "package.json": PKG, ".gitignore": "", ".claude/settings.local.json": LOCAL[".claude/settings.local.json"] }, { git: true });
+  const r = run([dir]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /WARN\s+Personal Claude Code file committed: \.claude\/settings\.local\.json/);
+  assert.match(r.stdout, /git rm --cached \.claude\/settings\.local\.json/);
+  assert.doesNotMatch(r.stdout, /LEAK/);
+});
