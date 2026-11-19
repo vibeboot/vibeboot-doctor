@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.7";
+const VERSION = "0.1.8";
 const SITE = "https://vibeboot.dev";
 const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
@@ -125,6 +125,36 @@ function gitignoreCovers(gitignore: string, file: string) {
   return ignored;
 }
 
+/* NEXT_PUBLIC_ values read by destructuring process.env. Next.js only replaces process.env.NEXT_PUBLIC_NAME at build
+ * time; on Next.js 16.4.5 (Turbopack and webpack, Nov 19, 2026) `const { NEXT_PUBLIC_X } = process.env` stayed a runtime
+ * lookup, so it is undefined in the browser. Server code still sees the value, so only "use client" files are warnings. */
+const SRC_SKIP = new Set(["node_modules", ".next", ".git", "out", "build", "dist", "coverage", ".vercel", ".turbo", ".netlify", "public"]);
+const SRC_EXT = /\.(tsx?|jsx?|mjs|cjs)$/;
+export function findEnvDestructures(text: string): { line: number; names: string[] }[] {
+  const hits: { line: number; names: string[] }[] = [];
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
+  const re = /\b(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*process\.env\b(?!\s*\.)/g;
+  for (let m; (m = re.exec(code)); ) {
+    const names = [...new Set((m[1].match(/\bNEXT_PUBLIC_[A-Za-z0-9_]+/g) ?? []))];
+    if (names.length) hits.push({ line: code.slice(0, m.index).split("\n").length, names });
+  }
+  return hits;
+}
+export const isClientFile = (text: string) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(text);
+function sourceFiles(root: string, max = 4000): string[] {
+  const outFiles: string[] = []; const stack = [""];
+  while (stack.length && outFiles.length < max) {
+    const rel = stack.pop()!; let ents: fs.Dirent[];
+    try { ents = fs.readdirSync(path.join(root, rel), { withFileTypes: true }); } catch { continue; }
+    for (const e of ents) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) { if (!SRC_SKIP.has(e.name) && !e.name.startsWith(".")) stack.push(r); }
+      else if (e.isFile() && SRC_EXT.test(e.name) && !/\.d\.ts$/.test(e.name)) outFiles.push(r);
+    }
+  }
+  return outFiles.sort();
+}
+
 function projectMode(dir: string, json: boolean) {
   const abs = path.resolve(dir);
   const pkgText = readIf(path.join(abs, "package.json"));
@@ -170,6 +200,19 @@ function projectMode(dir: string, json: boolean) {
     if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.length === 1 ? "This is a personal Claude Code file" : "These are personal Claude Code files"} (your own permissions, allowed commands or notes), so one git add . would commit ${exposed.length === 1 ? "it" : "them"} for everyone.`, fix: [`Add ${exposed.join(" and ")} to .gitignore`, `Check with: git check-ignore -v ${exposed[0]}`], file: ".gitignore" });
   }
 
+  // NEXT_PUBLIC_ destructured from process.env (undefined in the browser)
+  const client: string[] = [], server: string[] = [];
+  for (const f of sourceFiles(abs)) {
+    let t: string | null = null;
+    try { if (fs.statSync(path.join(abs, f)).size <= 512_000) t = readIf(path.join(abs, f)); } catch { /* unreadable */ }
+    if (t == null || !t.includes("NEXT_PUBLIC_")) continue;
+    for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
+  }
+  const envFix = ["Write each one out in full, e.g. const apiUrl = process.env.NEXT_PUBLIC_API_URL", "Then rebuild: the value is copied in when next build runs"];
+  const where = (l: string[]) => l.slice(0, 3).join("; ") + (l.length > 3 ? `; and ${l.length - 3} more` : "");
+  if (client.length) findings.push({ severity: "warn", title: `NEXT_PUBLIC_ destructured from process.env in a client file: ${where(client)}`, detail: "Next.js only swaps in NEXT_PUBLIC_ values written out as process.env.NEXT_PUBLIC_NAME. Destructured like this, the value is undefined in the browser (checked on Next.js 16.4.5 with Turbopack and webpack).", fix: envFix, file: client[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
+  if (server.length) findings.push({ severity: "info", title: `NEXT_PUBLIC_ destructured from process.env: ${where(server)}`, detail: "Fine in server only code, but if this file is ever imported by a \"use client\" component the value is undefined in the browser. Next.js only swaps in values written out as process.env.NEXT_PUBLIC_NAME.", fix: envFix.slice(0, 1), file: server[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
+
   // middleware.ts on Next.js 16
   for (const n of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
     const t = readIf(path.join(abs, n)); if (t == null || !looksLikeMiddleware(t)) continue;
@@ -189,7 +232,7 @@ function projectMode(dir: string, json: boolean) {
   if (json) { console.log(JSON.stringify({ mode: "project", dir: abs, stack, findings: list }, null, 2)); return n("leak") ? 1 : 0; }
 
   say(`${bold("VibeBoot Doctor")} ${dim(VERSION)}  ${abs}`);
-  say(dim(`Stack: ${stack.join(", ") || "unknown"}. Checked package.json${envNames.length ? ", " + envNames.join(", ") : ""}${hasMw ? ", middleware" : ""}. Nothing left this machine.`));
+  say(dim(`Stack: ${stack.join(", ") || "unknown"}. Checked package.json${envNames.length ? ", " + envNames.join(", ") : ""}${hasMw ? ", middleware" : ""}, source files. Nothing left this machine.`));
   say();
   for (const f of list) {
     say(`${tag[f.severity]}  ${bold(f.title)}`);

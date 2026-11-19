@@ -174,6 +174,19 @@ Error: Module not found: Can't resolve 'fs'
     prompt: 'next build fails because a route reads runtime or uncached data outside <Suspense> (cacheComponents is on). For this route, move the cookies/auth/DB access into a child component wrapped in <Suspense>, or add "use cache" if the data is the same for everyone, or export const instant = false if the page is fully per-user. Explain which one you picked.'
   },
   {
+    id: "dynamic-server-usage",
+    quick: "call unstable_rethrow(err) first in the catch",
+    name: "Dynamic server usage: Route couldn't be rendered statically because it used cookies",
+    where: "build warning",
+    looksLike: "Error: Dynamic server usage: Route /account couldn't be rendered statically because it used `cookies`. See more info here: https://nextjs.org/docs/messages/dynamic-server-error\n  digest: 'DYNAMIC_SERVER_USAGE'",
+    match: ["dynamic server usage", "couldn't be rendered statically because it used", "dynamic_server_usage", "dynamic-server-error", "because it used revalidate: 0 fetch", 'with `dynamic = "error"` couldn\'t be rendered statically'],
+    means: 'During next build, Next.js tries to prerender every page. When a page calls cookies(), headers(), searchParams or a fetch with cache: "no-store", Next.js throws a special internal error to stop and mark the route as dynamic. If your own try/catch catches it and logs it, you see this scary message in the build log. In our Next.js 16.4.5 test the build still passed, the route was listed as dynamic (\u0192) and cookies worked per request with next start. Nothing is broken yet, but the same catch also swallows notFound() and redirect().',
+    causes: ["cookies(), headers() or auth() wrapped in a try/catch that logs every error", 'A fetch with cache: "no-store" inside try/catch (the log says "because it used revalidate: 0 fetch")', "A helper like getUser() that catches everything and is called from a page or layout", 'export const dynamic = "error" on that route. Then it isn\'t a log line but a failed build: Route /x with `dynamic = "error"` couldn\'t be rendered statically because it used `headers()`'],
+    fix: ["Call unstable_rethrow(err) from next/navigation as the first line of the catch. It rethrows only Next.js internal errors, so the route goes dynamic quietly and your real errors still get handled", "Or move the cookies() or headers() call above the try, so only the risky part is wrapped", `Don't add export const dynamic = "force-static" to hide it. In our test headers() then came back empty (user agent was null)`, "If the page should be static, stop reading cookies or headers there and move that part into a Client Component or a Route Handler", 'If you set export const dynamic = "error" on purpose, either remove the request data from that route or remove the setting'],
+    code: { file: "src/app/account/page.tsx", body: 'import { cookies } from "next/headers";\nimport { unstable_rethrow } from "next/navigation";\n\nexport default async function Page() {\n  let theme = "light";\n  try {\n    const jar = await cookies();\n    theme = jar.get("theme")?.value ?? theme;\n  } catch (err) {\n    unstable_rethrow(err); // Next.js errors\n    console.error(err);\n  }\n  return <p>{theme}</p>;\n}' },
+    prompt: `next build logs "Dynamic server usage: Route ... couldn't be rendered statically because it used cookies" (or headers, or a no-store fetch). Find every try/catch in pages, layouts and the helpers they call that wraps cookies(), headers(), auth(), searchParams or a no-store fetch. Add unstable_rethrow(err) from next/navigation as the first line of each catch, or move the request API call above the try. Don't add export const dynamic = "force-static" or remove the error logging. List each file you change.`
+  },
+  {
     id: "params-promise",
     agent: true,
     quick: "const { slug } = await params",
@@ -251,6 +264,19 @@ Error: Module not found: Can't resolve 'fs'
     fix: ["See what's installed: npm ls next react react-dom", "Pin an exact version you have tested (no ^), and make it 16.4.5 or later since 16.4.5 is the Nov 3, 2026 security release: npm pkg set dependencies.next=16.4.5 devDependencies.eslint-config-next=16.4.5, run npm install to update package-lock.json, then commit both files together", "Use npm ci in CI and deploy builds so installs match the lockfile exactly", "Upgrade on purpose in its own branch: npx @next/codemod@canary upgrade latest, then run the build and tests"],
     code: { file: "terminal", body: 'npm ls next react react-dom\nnpm pkg set dependencies.next=16.4.5 devDependencies.eslint-config-next=16.4.5\nnpm install\ngit add package.json package-lock.json\ngit commit -m "Pin next to 16.4.5"\nnpm ci && npm run build' },
     prompt: "npm ci fails because package.json and package-lock.json are out of sync on next. Don't upgrade anything. Find which commit changed the next/react/eslint-config-next versions, restore the last version the app built with, pin it as an exact version (no ^), regenerate the lockfile with npm install, and confirm npm ci && npm run build pass. If that version is below 16.4.5 (the Nov 3, 2026 Next.js security release), tell me before pinning it. List every version you changed."
+  },
+  {
+    id: "next-public-env-undefined",
+    quick: "set it where next build runs, then redeploy",
+    name: "NEXT_PUBLIC_ env var is undefined in production (or stuck on the old value)",
+    where: "silent bug",
+    looksLike: "console.log(process.env.NEXT_PUBLIC_API_URL)\n// undefined\n\nWorks with npm run dev. On the deployed site it's undefined, or still the old value after you changed it in the hosting dashboard.",
+    match: ["process.env.next_public_", "next_public_", "undefined in production", "env var is undefined", "environment variable is undefined", "env variable undefined", "undefined after deploy"],
+    means: "Next.js copies NEXT_PUBLIC_ values into the JavaScript bundle when next build runs. The browser never reads your host's env vars. If the variable wasn't set where the build ran, undefined is baked in, and changing it later does nothing until the app is built again. In our Next.js 16.4.5 test, server code kept the build time value of a NEXT_PUBLIC_ variable too, while a variable without the prefix was read fresh at request time on a dynamic page.",
+    causes: ["The value only lives in .env.local, which isn't committed, so the build on Vercel, Netlify or CI never saw it", "It was added or changed in the hosting dashboard after the last build, and nothing was redeployed", "It's set for Preview but not Production (or the other way round) in Vercel's environment settings", "Docker: it's passed with docker run -e at runtime, but next build ran during docker build, where it wasn't set", "The name has no NEXT_PUBLIC_ prefix, so it's server only and undefined in the browser", "One build or image is promoted from staging to production, so the public value is frozen from whichever environment built it"],
+    fix: ["Add the variable in your host's settings for the environment that builds (Production, Preview or both)", "Start a new deployment so next build runs again with the value. Changing it in the dashboard doesn't touch a build that already exists", "Write it out in full: process.env.NEXT_PUBLIC_API_URL. The Next.js docs say process.env[name] and const env = process.env lookups are not inlined. They happened to work in our Turbopack test, so don't count on either", "Docker: declare it in the Dockerfile with ARG and then ENV, both before RUN npm run build, and pass the value with --build-arg when you run docker build", "If the value must change without a rebuild, drop the prefix: read a plain variable in a Server Component that renders per request (await connection() first) and pass it down as a prop", "Never put a secret in a NEXT_PUBLIC_ variable. Everything with that prefix ships to every visitor"],
+    code: { file: "src/app/page.tsx", body: 'import { connection } from "next/server";\nimport Widget from "./widget";\n\n// Read per request: a new value needs\n// a restart, not a rebuild.\nexport default async function Page() {\n  await connection();\n  return <Widget apiUrl={process.env.API_URL} />;\n}' },
+    prompt: "A NEXT_PUBLIC_ environment variable is undefined (or stale) in production but works locally. Find every place it's read and make sure each one is written as process.env.NEXT_PUBLIC_NAME in full (no process.env[name], no destructuring). Tell me exactly where it has to be set so it exists when next build runs on my host, and for which environment, then remind me to redeploy. If the value must change without a rebuild, or is a secret, move it to a server only variable read in a dynamically rendered Server Component and pass it down as a prop. Don't add fallback values that hide a missing variable."
   },
   {
     id: "max-update-depth",
@@ -1368,11 +1394,14 @@ var STRIPE_VERIFY = {
 };
 var NOV9 = { on: "November 9, 2026", iso: "2026-11-09" };
 var NOV12 = { on: "November 12, 2026", iso: "2026-11-12" };
+var NOV13 = { on: "November 13, 2026", iso: "2026-11-13" };
+var NOV18 = { on: "November 18, 2026", iso: "2026-11-18" };
 var VERIFIED_ON = {
   // Re-checked on Next.js 16.4.5 on 2026-11-09 (scratch app next build/next start, same results as 16.4.3).
   // Entries not listed keep their tool's CHECKED date (docs, dashboard, CLI or OAuth-provider checks not re-run).
   stripe: Object.fromEntries(["no-signatures-found", "redirect-3xx", "unauthorized-401", "not-found-404", "edge-runtime", "missing-raw-body", "timestamp-tolerance", "static-export"].map((id) => [id, NOV9])),
-  authjs: { ...Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9])), "google-redirect-uri": NOV12 }
+  authjs: { ...Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9])), "google-redirect-uri": NOV12 },
+  nextjs: { "next-public-env-undefined": NOV13, "dynamic-server-usage": NOV18 }
 };
 
 // src/lib/doctor.ts
@@ -1622,7 +1651,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.7";
+var VERSION = "0.1.8";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
@@ -1749,6 +1778,39 @@ function gitignoreCovers(gitignore, file) {
   }
   return ignored;
 }
+var SRC_SKIP = /* @__PURE__ */ new Set(["node_modules", ".next", ".git", "out", "build", "dist", "coverage", ".vercel", ".turbo", ".netlify", "public"]);
+var SRC_EXT = /\.(tsx?|jsx?|mjs|cjs)$/;
+function findEnvDestructures(text) {
+  const hits = [];
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
+  const re = /\b(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*process\.env\b(?!\s*\.)/g;
+  for (let m; m = re.exec(code); ) {
+    const names = [...new Set(m[1].match(/\bNEXT_PUBLIC_[A-Za-z0-9_]+/g) ?? [])];
+    if (names.length) hits.push({ line: code.slice(0, m.index).split("\n").length, names });
+  }
+  return hits;
+}
+var isClientFile = (text) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(text);
+function sourceFiles(root, max = 4e3) {
+  const outFiles = [];
+  const stack = [""];
+  while (stack.length && outFiles.length < max) {
+    const rel = stack.pop();
+    let ents;
+    try {
+      ents = fs.readdirSync(path.join(root, rel), { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of ents) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (e.isDirectory()) {
+        if (!SRC_SKIP.has(e.name) && !e.name.startsWith(".")) stack.push(r);
+      } else if (e.isFile() && SRC_EXT.test(e.name) && !/\.d\.ts$/.test(e.name)) outFiles.push(r);
+    }
+  }
+  return outFiles.sort();
+}
 function projectMode(dir, json) {
   const abs = path.resolve(dir);
   const pkgText = readIf(path.join(abs, "package.json"));
@@ -1788,6 +1850,20 @@ function projectMode(dir, json) {
     const exposed = (inGitRepo(abs) ? gitNotIgnored(abs, personal) : null) ?? personal.filter((n2) => !gitignoreCovers(readIf(path.join(abs, ".gitignore")) ?? "", n2));
     if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.length === 1 ? "This is a personal Claude Code file" : "These are personal Claude Code files"} (your own permissions, allowed commands or notes), so one git add . would commit ${exposed.length === 1 ? "it" : "them"} for everyone.`, fix: [`Add ${exposed.join(" and ")} to .gitignore`, `Check with: git check-ignore -v ${exposed[0]}`], file: ".gitignore" });
   }
+  const client = [], server = [];
+  for (const f of sourceFiles(abs)) {
+    let t = null;
+    try {
+      if (fs.statSync(path.join(abs, f)).size <= 512e3) t = readIf(path.join(abs, f));
+    } catch {
+    }
+    if (t == null || !t.includes("NEXT_PUBLIC_")) continue;
+    for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
+  }
+  const envFix = ["Write each one out in full, e.g. const apiUrl = process.env.NEXT_PUBLIC_API_URL", "Then rebuild: the value is copied in when next build runs"];
+  const where = (l) => l.slice(0, 3).join("; ") + (l.length > 3 ? `; and ${l.length - 3} more` : "");
+  if (client.length) findings.push({ severity: "warn", title: `NEXT_PUBLIC_ destructured from process.env in a client file: ${where(client)}`, detail: "Next.js only swaps in NEXT_PUBLIC_ values written out as process.env.NEXT_PUBLIC_NAME. Destructured like this, the value is undefined in the browser (checked on Next.js 16.4.5 with Turbopack and webpack).", fix: envFix, file: client[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
+  if (server.length) findings.push({ severity: "info", title: `NEXT_PUBLIC_ destructured from process.env: ${where(server)}`, detail: 'Fine in server only code, but if this file is ever imported by a "use client" component the value is undefined in the browser. Next.js only swaps in values written out as process.env.NEXT_PUBLIC_NAME.', fix: envFix.slice(0, 1), file: server[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
   for (const n2 of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
     const t = readIf(path.join(abs, n2));
     if (t == null || !looksLikeMiddleware(t)) continue;
@@ -1807,7 +1883,7 @@ function projectMode(dir, json) {
     return n("leak") ? 1 : 0;
   }
   say(`${bold("VibeBoot Doctor")} ${dim(VERSION)}  ${abs}`);
-  say(dim(`Stack: ${stack.join(", ") || "unknown"}. Checked package.json${envNames.length ? ", " + envNames.join(", ") : ""}${hasMw ? ", middleware" : ""}. Nothing left this machine.`));
+  say(dim(`Stack: ${stack.join(", ") || "unknown"}. Checked package.json${envNames.length ? ", " + envNames.join(", ") : ""}${hasMw ? ", middleware" : ""}, source files. Nothing left this machine.`));
   say();
   for (const f of list) {
     say(`${tag[f.severity]}  ${bold(f.title)}`);
@@ -1856,3 +1932,7 @@ main().then((c2) => process.exit(c2), (e) => {
   console.error(e);
   process.exit(2);
 });
+export {
+  findEnvDestructures,
+  isClientFile
+};

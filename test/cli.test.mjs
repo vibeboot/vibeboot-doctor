@@ -159,3 +159,39 @@ test("a committed personal Claude Code file is a WARN with the git rm --cached f
   assert.match(r.stdout, /git rm --cached \.claude\/settings\.local\.json/);
   assert.doesNotMatch(r.stdout, /LEAK/);
 });
+
+test("error mode knows all 73 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
+  assert.match(run(["--help"]).stdout, /against 73 known fixes/);
+  const d = run(["Error: Dynamic server usage: Route /account couldn't be rendered statically because it used `cookies`."]);
+  assert.equal(d.status, 0, d.stdout);
+  assert.match(d.stdout, /fix\/nextjs\/dynamic-server-usage/);
+  const e = run(["process.env.NEXT_PUBLIC_API_URL is undefined in production"]);
+  assert.equal(e.status, 0, e.stdout);
+  assert.match(e.stdout, /fix\/nextjs\/next-public-env-undefined/);
+});
+
+const W = '"use client";\nimport { useEffect } from "react";\n';
+test("NEXT_PUBLIC_ destructured from process.env in a \"use client\" file is a WARN with file:line", () => {
+  const dir = nested({
+    "package.json": PKG,
+    "src/app/widget.tsx": W + "// a comment\nconst { NEXT_PUBLIC_API_URL, NEXT_PUBLIC_APP_NAME: name } = process.env;\nexport default function W() { return null; }\n",
+    "node_modules/x/index.js": '"use client";\nconst { NEXT_PUBLIC_X } = process.env;\n',
+  });
+  const r = run([dir]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /WARN\s+NEXT_PUBLIC_ destructured from process\.env in a client file: src\/app\/widget\.tsx:4 \(NEXT_PUBLIC_API_URL, NEXT_PUBLIC_APP_NAME\)/);
+  assert.match(r.stdout, /fix\/nextjs\/next-public-env-undefined/);
+  assert.doesNotMatch(r.stdout, /node_modules/);
+});
+
+test("NEXT_PUBLIC_ written out in full is not flagged; destructuring in server code is only a note", () => {
+  const ok = nested({ "package.json": PKG, "src/app/w.tsx": W + "const url = process.env.NEXT_PUBLIC_API_URL;\nconst { NODE_ENV } = process.env;\n// const { NEXT_PUBLIC_OLD } = process.env;\n/* const { NEXT_PUBLIC_B } = process.env; */\n" });
+  const a = run([ok]);
+  assert.doesNotMatch(a.stdout, /destructured/, a.stdout);
+  const srv = nested({ "package.json": PKG, "src/lib/config.ts": "export const { NEXT_PUBLIC_SITE_URL } = process.env;\n" });
+  const b = run([srv, "--json"]);
+  const f = JSON.parse(b.stdout).findings.filter((x) => /destructured/.test(x.title));
+  assert.equal(f.length, 1);
+  assert.equal(f[0].severity, "info");
+  assert.equal(f[0].file, "src/lib/config.ts");
+});
