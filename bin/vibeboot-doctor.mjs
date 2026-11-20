@@ -274,9 +274,22 @@ Error: Module not found: Can't resolve 'fs'
     match: ["process.env.next_public_", "next_public_", "undefined in production", "env var is undefined", "environment variable is undefined", "env variable undefined", "undefined after deploy"],
     means: "Next.js copies NEXT_PUBLIC_ values into the JavaScript bundle when next build runs. The browser never reads your host's env vars. If the variable wasn't set where the build ran, undefined is baked in, and changing it later does nothing until the app is built again. In our Next.js 16.4.5 test, server code kept the build time value of a NEXT_PUBLIC_ variable too, while a variable without the prefix was read fresh at request time on a dynamic page.",
     causes: ["The value only lives in .env.local, which isn't committed, so the build on Vercel, Netlify or CI never saw it", "It was added or changed in the hosting dashboard after the last build, and nothing was redeployed", "It's set for Preview but not Production (or the other way round) in Vercel's environment settings", "Docker: it's passed with docker run -e at runtime, but next build ran during docker build, where it wasn't set", "The name has no NEXT_PUBLIC_ prefix, so it's server only and undefined in the browser", "One build or image is promoted from staging to production, so the public value is frozen from whichever environment built it"],
-    fix: ["Add the variable in your host's settings for the environment that builds (Production, Preview or both)", "Start a new deployment so next build runs again with the value. Changing it in the dashboard doesn't touch a build that already exists", "Write it out in full: process.env.NEXT_PUBLIC_API_URL. The Next.js docs say process.env[name] and const env = process.env lookups are not inlined. They happened to work in our Turbopack test, so don't count on either", "Docker: declare it in the Dockerfile with ARG and then ENV, both before RUN npm run build, and pass the value with --build-arg when you run docker build", "If the value must change without a rebuild, drop the prefix: read a plain variable in a Server Component that renders per request (await connection() first) and pass it down as a prop", "Never put a secret in a NEXT_PUBLIC_ variable. Everything with that prefix ships to every visitor"],
+    fix: ["Add the variable in your host's settings for the environment that builds (Production, Preview or both)", "Start a new deployment so next build runs again with the value. Changing it in the dashboard doesn't touch a build that already exists", "Write it out in full: process.env.NEXT_PUBLIC_API_URL. Don't destructure it: const { NEXT_PUBLIC_API_URL } = process.env came back undefined in the browser in our test with both Turbopack and webpack (npx github:vibeboot/vibeboot-doctor flags it in your repo). The Next.js docs say process.env[name] and const env = process.env lookups are not inlined either. In our test process.env[name] only worked with Turbopack, so don't count on either", "Docker: declare it in the Dockerfile with ARG and then ENV, both before RUN npm run build, and pass the value with --build-arg when you run docker build", "If the value must change without a rebuild, drop the prefix: read a plain variable in a Server Component that renders per request (await connection() first) and pass it down as a prop", "Never put a secret in a NEXT_PUBLIC_ variable. Everything with that prefix ships to every visitor"],
     code: { file: "src/app/page.tsx", body: 'import { connection } from "next/server";\nimport Widget from "./widget";\n\n// Read per request: a new value needs\n// a restart, not a rebuild.\nexport default async function Page() {\n  await connection();\n  return <Widget apiUrl={process.env.API_URL} />;\n}' },
     prompt: "A NEXT_PUBLIC_ environment variable is undefined (or stale) in production but works locally. Find every place it's read and make sure each one is written as process.env.NEXT_PUBLIC_NAME in full (no process.env[name], no destructuring). Tell me exactly where it has to be set so it exists when next build runs on my host, and for which environment, then remind me to redeploy. If the value must change without a rebuild, or is a secret, move it to a server only variable read in a dynamically rendered Server Component and pass it down as a prop. Don't add fallback values that hide a missing variable."
+  },
+  {
+    id: "ai-sdk-stream-timeout",
+    quick: "raise export const maxDuration in the chat route",
+    name: "AI SDK stream stops or times out on Vercel (maxDuration)",
+    where: "Vercel runtime log",
+    looksLike: "Vercel Runtime Timeout Error: Task timed out after 30 seconds\n504 Gateway Timeout  FUNCTION_INVOCATION_TIMEOUT\n\nbrowser: Uncaught (in promise) Error: Connection closed",
+    match: ["vercel runtime timeout error", "task timed out after", "maxduration", "error: connection closed", "function_invocation_timeout", "streamtext", "usechat", "stream stops", "response cut off", "chopped off"],
+    means: "Vercel stops a function when it reaches its maximum duration, and for a chat route that time includes every second spent streaming the answer. Nothing crashes in your code. The stream just ends, the UI keeps half an answer, useChat can throw Connection closed, and the log says Task timed out after N seconds. N is the limit that fired. With Fluid compute, which is on by default for projects created since April 23, 2025, the default is 300 seconds on every plan. So if N is 30, look for export const maxDuration = 30 in your route: the AI SDK chat examples include that line, and it lowers the limit. If N is 10 or 15, the project most likely has Fluid compute turned off, where the old defaults of 10 seconds on Hobby and 15 on Pro still apply.",
+    causes: ["export const maxDuration = 30 copied from the AI SDK examples, then a reasoning model or a tool calling loop runs longer than 30 seconds", "An older project with Fluid compute turned off (10 seconds default on Hobby, 15 on Pro)", "No maxDuration in the route and a low Default Max Duration in Project Settings, Functions, or a functions maxDuration in vercel.json", 'export const runtime = "edge" on the chat route. Edge has to start the response within 25 seconds, so a slow first token fails before anything streams', "The model or a tool call hangs with no deadline, so the function waits until the limit"],
+    fix: ["Set export const maxDuration = 300 in the route file that streams, like app/api/chat/route.ts. 300 is the most Hobby allows. Pro and Enterprise can go up to 800", "Check the seconds in the log line. That number is the limit you hit, and it tells you which setting to change", "Calling the model from a Server Action? Put maxDuration in the page.tsx that uses the action. Next.js applies it to the Server Actions on that page", "If the log says 10 or 15, turn on Fluid compute in Project Settings, Functions, then redeploy", 'Remove export const runtime = "edge" from the chat route unless you really need Edge. Node.js functions get the full duration', "Redeploy and confirm: next build writes the value to .next/server/functions-config-manifest.json, and vercel inspect <deployment url> --json shows it as timeout", "If answers really need longer than your plan allows, cap them with maxOutputTokens or move the work into a background job instead of one request"],
+    code: { "file": "src/app/api/chat/route.ts", "body": "// Vercel counts streaming time too. Hobby max is 300, Pro and Enterprise 800.\nexport const maxDuration = 300;\n\nexport async function POST(req: Request) {\n  // your streamText(...) call and stream response stay exactly as they are\n}\n\n// Server Action instead of a route? Put the same export in the page.tsx that uses it." },
+    prompt: `My AI SDK chat works locally, but on Vercel long answers stop halfway and the log says "Vercel Runtime Timeout Error: Task timed out after N seconds". Find every route handler, and every page that uses a Server Action, that calls streamText or generateText. List each export const maxDuration and export const runtime you find, plus any functions maxDuration in vercel.json. Then set export const maxDuration = 300 in the chat route file (or in the page.tsx that uses the Server Action) and remove runtime = "edge" from it unless something there needs Edge. Don't change the streaming code. Tell me what each file had before.`
   },
   {
     id: "max-update-depth",
@@ -1064,6 +1077,7 @@ function scoreError4(e, raw) {
   const code = /status code (\d{3})|\b(30[1278]|40[134]|405|504)\b/.exec(q);
   const n = code?.[1] ?? code?.[2];
   if (n && e.match.includes(n)) s += 20;
+  if (e.id === "timeout" && /task timed out after|vercel runtime timeout|function_invocation_timeout|maxduration|streamtext|usechat/.test(q) && !/stripe|webhook|whsec_|evt_/.test(q)) s = Math.min(s, 5);
   return s;
 }
 
@@ -1394,14 +1408,14 @@ var STRIPE_VERIFY = {
 };
 var NOV9 = { on: "November 9, 2026", iso: "2026-11-09" };
 var NOV12 = { on: "November 12, 2026", iso: "2026-11-12" };
-var NOV13 = { on: "November 13, 2026", iso: "2026-11-13" };
 var NOV18 = { on: "November 18, 2026", iso: "2026-11-18" };
+var NOV19 = { on: "November 19, 2026", iso: "2026-11-19" };
 var VERIFIED_ON = {
   // Re-checked on Next.js 16.4.5 on 2026-11-09 (scratch app next build/next start, same results as 16.4.3).
   // Entries not listed keep their tool's CHECKED date (docs, dashboard, CLI or OAuth-provider checks not re-run).
   stripe: Object.fromEntries(["no-signatures-found", "redirect-3xx", "unauthorized-401", "not-found-404", "edge-runtime", "missing-raw-body", "timestamp-tolerance", "static-export"].map((id) => [id, NOV9])),
   authjs: { ...Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9])), "google-redirect-uri": NOV12 },
-  nextjs: { "next-public-env-undefined": NOV13, "dynamic-server-usage": NOV18 }
+  nextjs: { "next-public-env-undefined": NOV19, "dynamic-server-usage": NOV18, "ai-sdk-stream-timeout": NOV19 }
 };
 
 // src/lib/doctor.ts
@@ -1651,7 +1665,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.8";
+var VERSION = "0.1.9";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
@@ -1780,15 +1794,59 @@ function gitignoreCovers(gitignore, file) {
 }
 var SRC_SKIP = /* @__PURE__ */ new Set(["node_modules", ".next", ".git", "out", "build", "dist", "coverage", ".vercel", ".turbo", ".netlify", "public"]);
 var SRC_EXT = /\.(tsx?|jsx?|mjs|cjs)$/;
+var stripComments = (text) => text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
+function blankNonCode(text) {
+  const o = text.split("");
+  let i = 0;
+  const blank = (from, to) => {
+    for (let k = from; k < to; k++) if (o[k] !== "\n") o[k] = " ";
+  };
+  while (i < text.length) {
+    const ch = text[i], nx = text[i + 1];
+    if (ch === "/" && nx === "/") {
+      const e = text.indexOf("\n", i);
+      const end = e < 0 ? text.length : e;
+      blank(i, end);
+      i = end;
+    } else if (ch === "/" && nx === "*") {
+      const e = text.indexOf("*/", i + 2);
+      const end = e < 0 ? text.length : e + 2;
+      blank(i, end);
+      i = end;
+    } else if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch && !(ch !== "`" && text[j] === "\n")) j += text[j] === "\\" ? 2 : 1;
+      blank(i + 1, Math.min(j, text.length));
+      i = j + 1;
+    } else i++;
+  }
+  return o.join("");
+}
 function findEnvDestructures(text) {
   const hits = [];
-  const code = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
+  const code = blankNonCode(text);
   const re = /\b(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*process\.env\b(?!\s*\.)/g;
   for (let m; m = re.exec(code); ) {
     const names = [...new Set(m[1].match(/\bNEXT_PUBLIC_[A-Za-z0-9_]+/g) ?? [])];
     if (names.length) hits.push({ line: code.slice(0, m.index).split("\n").length, names });
   }
   return hits;
+}
+var AI_CALL = /\b(?:streamText|streamObject|streamUI|generateText|generateObject)\s*\(|\.(?:toUIMessageStreamResponse|toDataStreamResponse|toTextStreamResponse)\s*\(|from\s*["'](?:ai|@ai-sdk\/[\w-]+)["']/;
+var isSegmentFile = (rel) => /(?:^|\/)app\/(?:.*\/)?(?:route|page|layout)\.(?:tsx?|jsx?|mjs)$/.test(rel);
+function findAiRouteLimits(text, minSeconds = 60) {
+  const code = stripComments(text);
+  if (!AI_CALL.test(code)) return {};
+  const lineOf = (i) => code.slice(0, i).split("\n").length;
+  const r = {};
+  const md = /\bexport\s+const\s+maxDuration\s*(?::\s*number\s*)?=\s*(\d+(?:_\d+)*)\b/.exec(code);
+  if (md) {
+    const seconds = Number(md[1].replace(/_/g, ""));
+    if (seconds < minSeconds) r.maxDuration = { line: lineOf(md.index), seconds };
+  }
+  const edge = /\bexport\s+const\s+runtime\s*(?::\s*string\s*)?=\s*["'](?:experimental-)?edge["']/.exec(code);
+  if (edge) r.edge = { line: lineOf(edge.index) };
+  return r;
 }
 var isClientFile = (text) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(text);
 function sourceFiles(root, max = 4e3) {
@@ -1851,19 +1909,28 @@ function projectMode(dir, json) {
     if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.length === 1 ? "This is a personal Claude Code file" : "These are personal Claude Code files"} (your own permissions, allowed commands or notes), so one git add . would commit ${exposed.length === 1 ? "it" : "them"} for everyone.`, fix: [`Add ${exposed.join(" and ")} to .gitignore`, `Check with: git check-ignore -v ${exposed[0]}`], file: ".gitignore" });
   }
   const client = [], server = [];
+  const shortAi = [], edgeAi = [];
   for (const f of sourceFiles(abs)) {
     let t = null;
     try {
       if (fs.statSync(path.join(abs, f)).size <= 512e3) t = readIf(path.join(abs, f));
     } catch {
     }
-    if (t == null || !t.includes("NEXT_PUBLIC_")) continue;
-    for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
+    if (t == null) continue;
+    if (t.includes("NEXT_PUBLIC_")) for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
+    if (isSegmentFile(f) && (t.includes("maxDuration") || t.includes("runtime"))) {
+      const a = findAiRouteLimits(t);
+      if (a.maxDuration) shortAi.push(`${f}:${a.maxDuration.line} (${a.maxDuration.seconds}s)`);
+      if (a.edge) edgeAi.push(`${f}:${a.edge.line}`);
+    }
   }
   const envFix = ["Write each one out in full, e.g. const apiUrl = process.env.NEXT_PUBLIC_API_URL", "Then rebuild: the value is copied in when next build runs"];
   const where = (l) => l.slice(0, 3).join("; ") + (l.length > 3 ? `; and ${l.length - 3} more` : "");
   if (client.length) findings.push({ severity: "warn", title: `NEXT_PUBLIC_ destructured from process.env in a client file: ${where(client)}`, detail: "Next.js only swaps in NEXT_PUBLIC_ values written out as process.env.NEXT_PUBLIC_NAME. Destructured like this, the value is undefined in the browser (checked on Next.js 16.4.5 with Turbopack and webpack).", fix: envFix, file: client[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
   if (server.length) findings.push({ severity: "info", title: `NEXT_PUBLIC_ destructured from process.env: ${where(server)}`, detail: 'Fine in server only code, but if this file is ever imported by a "use client" component the value is undefined in the browser. Next.js only swaps in values written out as process.env.NEXT_PUBLIC_NAME.', fix: envFix.slice(0, 1), file: server[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
+  const aiUrl = ref("/fix/nextjs/ai-sdk-stream-timeout");
+  if (shortAi.length) findings.push({ severity: "info", title: `Short maxDuration on an AI streaming route: ${where(shortAi)}`, detail: "On Vercel the time limit includes every second spent streaming the answer, so a long reply from a reasoning model or a tool calling loop stops halfway once this many seconds pass, and useChat can throw Connection closed. With Fluid compute the default is already 300 seconds on every plan, so this line lowers it.", fix: ["Raise it, e.g. export const maxDuration = 300 (the most Hobby allows; Pro and Enterprise go up to 800)", "Or delete the line to get your project's default", 'Redeploy, then check the seconds in any "Task timed out after N seconds" log line'], file: shortAi[0].split(":")[0], url: aiUrl });
+  if (edgeAi.length) findings.push({ severity: "info", title: `Edge runtime on an AI streaming route: ${where(edgeAi)}`, detail: "On Vercel an Edge function has to start its response within 25 seconds, so a slow first token from the model fails before anything streams. Node.js functions get the full duration.", fix: ['Remove export const runtime = "edge" unless something in this route needs Edge', "Then set export const maxDuration if you need more than your project's default"], file: edgeAi[0].split(":")[0], url: aiUrl });
   for (const n2 of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
     const t = readIf(path.join(abs, n2));
     if (t == null || !looksLikeMiddleware(t)) continue;
@@ -1933,6 +2000,10 @@ main().then((c2) => process.exit(c2), (e) => {
   process.exit(2);
 });
 export {
+  blankNonCode,
+  findAiRouteLimits,
   findEnvDestructures,
-  isClientFile
+  isClientFile,
+  isSegmentFile,
+  stripComments
 };

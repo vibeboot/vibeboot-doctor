@@ -160,8 +160,8 @@ test("a committed personal Claude Code file is a WARN with the git rm --cached f
   assert.doesNotMatch(r.stdout, /LEAK/);
 });
 
-test("error mode knows all 73 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
-  assert.match(run(["--help"]).stdout, /against 73 known fixes/);
+test("error mode knows all 74 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
+  assert.match(run(["--help"]).stdout, /against 74 known fixes/);
   const d = run(["Error: Dynamic server usage: Route /account couldn't be rendered statically because it used `cookies`."]);
   assert.equal(d.status, 0, d.stdout);
   assert.match(d.stdout, /fix\/nextjs\/dynamic-server-usage/);
@@ -194,4 +194,53 @@ test("NEXT_PUBLIC_ written out in full is not flagged; destructuring in server c
   assert.equal(f.length, 1);
   assert.equal(f[0].severity, "info");
   assert.equal(f[0].file, "src/lib/config.ts");
+});
+
+test("a plain Vercel timeout matches the AI SDK maxDuration fix first, not the Stripe webhook one", () => {
+  const r = run(["Vercel Runtime Timeout Error: Task timed out after 30 seconds"]);
+  assert.equal(r.status, 0, r.stdout);
+  const first = r.stdout.split("\n").find((l) => /^1\. /.test(l));
+  assert.match(first, /AI SDK stream stops or times out on Vercel/);
+  assert.match(r.stdout, /fix\/nextjs\/ai-sdk-stream-timeout/);
+  const s = run(["Stripe webhook: Task timed out after 10 seconds"]);
+  assert.match(s.stdout.split("\n").find((l) => /^1\. /.test(l)), /Timed out \/ not returning 2xx fast/);
+});
+
+const AI_ROUTE = 'import { streamText } from "ai";\nimport { openai } from "@ai-sdk/openai";\n\n';
+test("short maxDuration and Edge runtime on an AI streaming route are notes with file:line", () => {
+  const dir = nested({
+    "package.json": PKG,
+    "src/app/api/chat/route.ts": AI_ROUTE + "export const maxDuration = 30;\nexport const runtime = \"edge\";\nexport async function POST(req: Request) { return streamText({ model: openai(\"x\"), prompt: \"hi\" }).toUIMessageStreamResponse(); }\n",
+  });
+  const r = run([dir]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /INFO\s+Short maxDuration on an AI streaming route: src\/app\/api\/chat\/route\.ts:4 \(30s\)/);
+  assert.match(r.stdout, /INFO\s+Edge runtime on an AI streaming route: src\/app\/api\/chat\/route\.ts:5/);
+  assert.match(r.stdout, /fix\/nextjs\/ai-sdk-stream-timeout/);
+  assert.doesNotMatch(r.stdout, /WARN/);
+});
+
+test("no AI note for a long maxDuration, a non AI route, commented out lines or files outside app/", () => {
+  const dir = nested({
+    "package.json": PKG,
+    "app/api/chat/route.ts": AI_ROUTE + "export const maxDuration = 300;\n// export const runtime = \"edge\";\n/* export const maxDuration = 10; */\nexport async function POST() { return streamText({}).toTextStreamResponse(); }\n",
+    "app/api/cron/route.ts": "export const maxDuration = 10;\nexport const runtime = \"edge\";\nexport async function GET() { return new Response(\"ok\"); }\n",
+    "src/lib/ai.ts": AI_ROUTE + "export const maxDuration = 10;\n",
+  });
+  const r = run([dir, "--json"]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).findings.filter((f) => /AI streaming route/.test(f.title)), []);
+});
+
+test("NEXT_PUBLIC_ destructuring quoted inside a string (docs, fix text) is not flagged", () => {
+  const dir = nested({
+    "package.json": PKG,
+    "src/lib/fixes.ts": 'export const tip = "Don\'t destructure it: const { NEXT_PUBLIC_API_URL } = process.env is undefined in the browser";\nexport const t2 = `const { NEXT_PUBLIC_B } = process.env`;\n',
+    "src/app/c.tsx": W + 'const url = "a//b"; const { NEXT_PUBLIC_REAL } = process.env;\n',
+  });
+  const r = run([dir, "--json"]);
+  const f = JSON.parse(r.stdout).findings.filter((x) => /destructured/.test(x.title));
+  assert.equal(f.length, 1, r.stdout);
+  assert.match(f[0].title, /src\/app\/c\.tsx:3 \(NEXT_PUBLIC_REAL\)/);
+  assert.doesNotMatch(r.stdout, /fixes\.ts|NEXT_PUBLIC_B/);
 });

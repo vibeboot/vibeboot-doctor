@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.8";
+const VERSION = "0.1.9";
 const SITE = "https://vibeboot.dev";
 const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
@@ -130,15 +130,53 @@ function gitignoreCovers(gitignore: string, file: string) {
  * lookup, so it is undefined in the browser. Server code still sees the value, so only "use client" files are warnings. */
 const SRC_SKIP = new Set(["node_modules", ".next", ".git", "out", "build", "dist", "coverage", ".vercel", ".turbo", ".netlify", "public"]);
 const SRC_EXT = /\.(tsx?|jsx?|mjs|cjs)$/;
+/** Blanks out comments but keeps line numbers (and offsets) intact. */
+export const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
+/** Blanks out comments AND the inside of string literals (quotes kept, newlines kept), so code quoted in a string,
+ *  like a fix page that shows the wrong pattern, isn't read as code. ' and " strings stop at a newline, so a stray
+ *  quote (say in a regex literal) can only hide the rest of its own line. */
+export function blankNonCode(text: string): string {
+  const o = text.split("");
+  let i = 0;
+  const blank = (from: number, to: number) => { for (let k = from; k < to; k++) if (o[k] !== "\n") o[k] = " "; };
+  while (i < text.length) {
+    const ch = text[i], nx = text[i + 1];
+    if (ch === "/" && nx === "/") { const e = text.indexOf("\n", i); const end = e < 0 ? text.length : e; blank(i, end); i = end; }
+    else if (ch === "/" && nx === "*") { const e = text.indexOf("*/", i + 2); const end = e < 0 ? text.length : e + 2; blank(i, end); i = end; }
+    else if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch && !(ch !== "`" && text[j] === "\n")) j += text[j] === "\\" ? 2 : 1;
+      blank(i + 1, Math.min(j, text.length)); i = j + 1;
+    } else i++;
+  }
+  return o.join("");
+}
 export function findEnvDestructures(text: string): { line: number; names: string[] }[] {
   const hits: { line: number; names: string[] }[] = [];
-  const code = text.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " ")).replace(/(^|[^:"'`\\])\/\/[^\n]*/g, (m, a) => a + " ".repeat(m.length - a.length));
+  const code = blankNonCode(text);
   const re = /\b(?:const|let|var)\s*\{([^{}]*)\}\s*=\s*process\.env\b(?!\s*\.)/g;
   for (let m; (m = re.exec(code)); ) {
     const names = [...new Set((m[1].match(/\bNEXT_PUBLIC_[A-Za-z0-9_]+/g) ?? []))];
     if (names.length) hits.push({ line: code.slice(0, m.index).split("\n").length, names });
   }
   return hits;
+}
+/* AI streaming routes on Vercel (fix page /fix/nextjs/ai-sdk-stream-timeout, checked Nov 19, 2026 against the Vercel and AI SDK docs):
+ * the function's max duration includes the time spent streaming, so `export const maxDuration = 30` (the AI SDK examples) ends long
+ * answers halfway; Fluid compute defaults to 300s on every plan. Edge must start the response within 25s. Only route, page and layout
+ * files under app/ can set these, and only files that stream from the AI SDK are checked. Notes, never warnings: 30s can be on purpose. */
+const AI_CALL = /\b(?:streamText|streamObject|streamUI|generateText|generateObject)\s*\(|\.(?:toUIMessageStreamResponse|toDataStreamResponse|toTextStreamResponse)\s*\(|from\s*["'](?:ai|@ai-sdk\/[\w-]+)["']/;
+export const isSegmentFile = (rel: string) => /(?:^|\/)app\/(?:.*\/)?(?:route|page|layout)\.(?:tsx?|jsx?|mjs)$/.test(rel);
+export function findAiRouteLimits(text: string, minSeconds = 60): { maxDuration?: { line: number; seconds: number }; edge?: { line: number } } {
+  const code = stripComments(text);
+  if (!AI_CALL.test(code)) return {};
+  const lineOf = (i: number) => code.slice(0, i).split("\n").length;
+  const r: ReturnType<typeof findAiRouteLimits> = {};
+  const md = /\bexport\s+const\s+maxDuration\s*(?::\s*number\s*)?=\s*(\d+(?:_\d+)*)\b/.exec(code);
+  if (md) { const seconds = Number(md[1].replace(/_/g, "")); if (seconds < minSeconds) r.maxDuration = { line: lineOf(md.index), seconds }; }
+  const edge = /\bexport\s+const\s+runtime\s*(?::\s*string\s*)?=\s*["'](?:experimental-)?edge["']/.exec(code);
+  if (edge) r.edge = { line: lineOf(edge.index) };
+  return r;
 }
 export const isClientFile = (text: string) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(text);
 function sourceFiles(root: string, max = 4000): string[] {
@@ -202,16 +240,26 @@ function projectMode(dir: string, json: boolean) {
 
   // NEXT_PUBLIC_ destructured from process.env (undefined in the browser)
   const client: string[] = [], server: string[] = [];
+  const shortAi: string[] = [], edgeAi: string[] = [];
   for (const f of sourceFiles(abs)) {
     let t: string | null = null;
     try { if (fs.statSync(path.join(abs, f)).size <= 512_000) t = readIf(path.join(abs, f)); } catch { /* unreadable */ }
-    if (t == null || !t.includes("NEXT_PUBLIC_")) continue;
-    for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
+    if (t == null) continue;
+    if (t.includes("NEXT_PUBLIC_")) for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
+    if (isSegmentFile(f) && (t.includes("maxDuration") || t.includes("runtime"))) {
+      const a = findAiRouteLimits(t);
+      if (a.maxDuration) shortAi.push(`${f}:${a.maxDuration.line} (${a.maxDuration.seconds}s)`);
+      if (a.edge) edgeAi.push(`${f}:${a.edge.line}`);
+    }
   }
   const envFix = ["Write each one out in full, e.g. const apiUrl = process.env.NEXT_PUBLIC_API_URL", "Then rebuild: the value is copied in when next build runs"];
   const where = (l: string[]) => l.slice(0, 3).join("; ") + (l.length > 3 ? `; and ${l.length - 3} more` : "");
   if (client.length) findings.push({ severity: "warn", title: `NEXT_PUBLIC_ destructured from process.env in a client file: ${where(client)}`, detail: "Next.js only swaps in NEXT_PUBLIC_ values written out as process.env.NEXT_PUBLIC_NAME. Destructured like this, the value is undefined in the browser (checked on Next.js 16.4.5 with Turbopack and webpack).", fix: envFix, file: client[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
   if (server.length) findings.push({ severity: "info", title: `NEXT_PUBLIC_ destructured from process.env: ${where(server)}`, detail: "Fine in server only code, but if this file is ever imported by a \"use client\" component the value is undefined in the browser. Next.js only swaps in values written out as process.env.NEXT_PUBLIC_NAME.", fix: envFix.slice(0, 1), file: server[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
+  // AI SDK streaming routes that Vercel will cut off early
+  const aiUrl = ref("/fix/nextjs/ai-sdk-stream-timeout");
+  if (shortAi.length) findings.push({ severity: "info", title: `Short maxDuration on an AI streaming route: ${where(shortAi)}`, detail: "On Vercel the time limit includes every second spent streaming the answer, so a long reply from a reasoning model or a tool calling loop stops halfway once this many seconds pass, and useChat can throw Connection closed. With Fluid compute the default is already 300 seconds on every plan, so this line lowers it.", fix: ["Raise it, e.g. export const maxDuration = 300 (the most Hobby allows; Pro and Enterprise go up to 800)", "Or delete the line to get your project's default", "Redeploy, then check the seconds in any \"Task timed out after N seconds\" log line"], file: shortAi[0].split(":")[0], url: aiUrl });
+  if (edgeAi.length) findings.push({ severity: "info", title: `Edge runtime on an AI streaming route: ${where(edgeAi)}`, detail: "On Vercel an Edge function has to start its response within 25 seconds, so a slow first token from the model fails before anything streams. Node.js functions get the full duration.", fix: ["Remove export const runtime = \"edge\" unless something in this route needs Edge", "Then set export const maxDuration if you need more than your project's default"], file: edgeAi[0].split(":")[0], url: aiUrl });
 
   // middleware.ts on Next.js 16
   for (const n of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
