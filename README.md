@@ -1,6 +1,6 @@
 # vibeboot-doctor
 
-Checks a Next.js project for the mistakes AI coding agents make most, and matches pasted errors against 73 verified fixes for Next.js, Auth.js, Prisma and Stripe webhooks.
+Checks a Next.js project for the mistakes AI coding agents make most, and matches pasted errors against 74 verified fixes for Next.js, Auth.js, Prisma and Stripe webhooks.
 
 ```bash
 # in your project folder
@@ -22,6 +22,7 @@ Node 18 or newer. No dependencies. It runs offline, uploads nothing, and never p
 | Secret keys behind `NEXT_PUBLIC_` (Stripe, OpenAI, Anthropic, database URLs and more) in your `.env*` files | Next.js ships every `NEXT_PUBLIC_` value to the browser |
 | `.env` files committed to git, or missing from `.gitignore` | One `git add .` and your keys are public |
 | `NEXT_PUBLIC_` values destructured from `process.env` (`const { NEXT_PUBLIC_API_URL } = process.env`) in your source files | Next.js only inlines `process.env.NEXT_PUBLIC_NAME` written out in full, so these are `undefined` in the browser |
+| AI SDK streaming routes (`streamText` and friends) with `export const maxDuration` under 60 seconds or `runtime = "edge"` | Vercel counts streaming time, so long answers stop halfway; Edge must start responding within 25 seconds |
 | Personal Claude Code files (`.claude/settings.local.json`, `CLAUDE.local.md`) committed or not in `.gitignore` | They hold your own allowed commands and notes, not team rules |
 | `middleware.ts` on Next.js 16 | Renamed to `proxy.ts`; agents keep writing the old file |
 | `next` as a range or `latest`, and `next` / `eslint-config-next` drift | Each install can build against a different Next.js |
@@ -50,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: vibeboot/vibeboot-doctor@b7edeca59fd2642e59a53a8356b69dbccaee1a5e # v0.1.8
+      - uses: vibeboot/vibeboot-doctor@19c34a67a3d2a254332f9c4e204a3508355683b3 # v0.1.9
 ```
 
 The example pins a full commit SHA, so a new Doctor version never changes your CI until you bump it. To update, swap in the SHA of a newer commit from the [commit list](https://github.com/vibeboot/vibeboot-doctor/commits/main). If you'd rather always run the latest, use `@main`.
