@@ -287,9 +287,22 @@ Error: Module not found: Can't resolve 'fs'
     match: ["vercel runtime timeout error", "task timed out after", "maxduration", "error: connection closed", "function_invocation_timeout", "streamtext", "usechat", "stream stops", "response cut off", "chopped off"],
     means: "Vercel stops a function when it reaches its maximum duration, and for a chat route that time includes every second spent streaming the answer. Nothing crashes in your code. The stream just ends, the UI keeps half an answer, useChat can throw Connection closed, and the log says Task timed out after N seconds. N is the limit that fired. With Fluid compute, which is on by default for projects created since April 23, 2025, the default is 300 seconds on every plan. So if N is 30, look for export const maxDuration = 30 in your route: the AI SDK chat examples include that line, and it lowers the limit. If N is 10 or 15, the project most likely has Fluid compute turned off, where the old defaults of 10 seconds on Hobby and 15 on Pro still apply.",
     causes: ["export const maxDuration = 30 copied from the AI SDK examples, then a reasoning model or a tool calling loop runs longer than 30 seconds", "An older project with Fluid compute turned off (10 seconds default on Hobby, 15 on Pro)", "No maxDuration in the route and a low Default Max Duration in Project Settings, Functions, or a functions maxDuration in vercel.json", 'export const runtime = "edge" on the chat route. Edge has to start the response within 25 seconds, so a slow first token fails before anything streams', "The model or a tool call hangs with no deadline, so the function waits until the limit"],
-    fix: ["Set export const maxDuration = 300 in the route file that streams, like app/api/chat/route.ts. 300 is the most Hobby allows. Pro and Enterprise can go up to 800", "Check the seconds in the log line. That number is the limit you hit, and it tells you which setting to change", "Calling the model from a Server Action? Put maxDuration in the page.tsx that uses the action. Next.js applies it to the Server Actions on that page", "If the log says 10 or 15, turn on Fluid compute in Project Settings, Functions, then redeploy", 'Remove export const runtime = "edge" from the chat route unless you really need Edge. Node.js functions get the full duration', "Redeploy and confirm: next build writes the value to .next/server/functions-config-manifest.json, and vercel inspect <deployment url> --json shows it as timeout", "If answers really need longer than your plan allows, cap them with maxOutputTokens or move the work into a background job instead of one request"],
-    code: { "file": "src/app/api/chat/route.ts", "body": "// Vercel counts streaming time too. Hobby max is 300, Pro and Enterprise 800.\nexport const maxDuration = 300;\n\nexport async function POST(req: Request) {\n  // your streamText(...) call and stream response stay exactly as they are\n}\n\n// Server Action instead of a route? Put the same export in the page.tsx that uses it." },
+    fix: ["Set export const maxDuration = 300 in the route file that streams, like app/api/chat/route.ts. 300 is the most Hobby allows. Pro and Enterprise can go up to 800, or up to 1800 in beta when set per function on a supported Node.js version", "Check the seconds in the log line. That number is the limit you hit, and it tells you which setting to change", "Calling the model from a Server Action? Put maxDuration in the page.tsx that uses the action. Next.js applies it to the Server Actions on that page", "If the log says 10 or 15, turn on Fluid compute in Project Settings, Functions, then redeploy", 'Remove export const runtime = "edge" from the chat route unless you really need Edge. Node.js functions get the full duration', "Redeploy and confirm: next build writes the value to .next/server/functions-config-manifest.json, and vercel inspect <deployment url> --json shows it as timeout", "If answers really need longer than your plan allows, cap them with maxOutputTokens or move the work into a background job instead of one request"],
+    code: { "file": "src/app/api/chat/route.ts", "body": "// Vercel counts streaming time too. Hobby max is 300, Pro and Enterprise 800 (1800 in beta).\nexport const maxDuration = 300;\n\nexport async function POST(req: Request) {\n  // your streamText(...) call and stream response stay exactly as they are\n}\n\n// Server Action instead of a route? Put the same export in the page.tsx that uses it." },
     prompt: `My AI SDK chat works locally, but on Vercel long answers stop halfway and the log says "Vercel Runtime Timeout Error: Task timed out after N seconds". Find every route handler, and every page that uses a Server Action, that calls streamText or generateText. List each export const maxDuration and export const runtime you find, plus any functions maxDuration in vercel.json. Then set export const maxDuration = 300 in the chat route file (or in the page.tsx that uses the Server Action) and remove runtime = "edge" from it unless something there needs Edge. Don't change the streaming code. Tell me what each file had before.`
+  },
+  {
+    id: "openai-429-quota",
+    quick: "read the 429 message: quota means add credits, rate limit means slow down",
+    name: "OpenAI 429 in a chat app: insufficient_quota or rate limit reached",
+    where: "server log",
+    looksLike: "AI_RetryError: Failed after 3 attempts. Last error: You exceeded your current quota, please check your plan and billing details.\n429  insufficient_quota\n\nRate limit reached for gpt-4o-mini in organization org-... on tokens per min (TPM): Limit 200000, Used 199500, Requested 1200. Please try again in 210ms.",
+    match: ["you exceeded your current quota", "insufficient_quota", "rate limit reached for", "rate_limit_exceeded", "credit_balance_exhausted", "spend_limit_exceeded", "usage_limit_exceeded", "check your plan and billing details", "statuscode: 429", "status code 429", "429 too many requests", "openai 429", "failed after 3 attempts"],
+    means: 'OpenAI uses the same 429 status for two different problems, and the message tells you which one you have. "You exceeded your current quota" (type insufficient_quota, or a newer code like credit_balance_exhausted or project_spend_limit_exceeded) is about billing: the API account has no prepaid credits left or hit a spend limit. Waiting and retrying never fixes that one. "Rate limit reached for ... per min" means you sent too many requests or tokens for your usage tier in a short window, and it clears on its own. The AI SDK treats every 429 as retryable and retries twice by default, so a quota error still takes a few seconds and then lands in your log as AI_RetryError: Failed after 3 attempts. In the browser, useChat only gets "An error occurred." because the AI SDK hides server errors from the client unless you pass onError.',
+    causes: ["No prepaid credits on the API account. A new account, or credits that ran out, fails on the very first call", "A ChatGPT Plus or Pro subscription but no API credits. ChatGPT and the API are billed separately", "A monthly spend limit you set on the organization or project was reached (organization_spend_limit_exceeded or project_spend_limit_exceeded)", "The API key belongs to a different organization or project than the one you added credits to", "Too many requests or tokens per minute for your usage tier, often from a loop, parallel calls, or one key shared by several apps", "Your own retry loop on top of the SDK's two retries, so one failed call turns into many"],
+    fix: ["Read the message before changing code. Quota or billing wording means money, rate limit wording means speed", "Quota: add credits in the API billing settings on platform.openai.com, for the same organization and project your key belongs to. A ChatGPT subscription does not cover API calls", "Spend limit: raise or remove it in your organization or project limits, or wait for the monthly reset", "Rate limit: check your tier in Settings, Organization, Limits, send fewer or smaller requests, and wait for the Retry-After header. The AI SDK already waits for Retry-After when it is under 60 seconds", "Don't wrap billing errors in retry loops. If you retry yourself, set maxRetries: 0 on that call so the retries don't stack", "Pass onError to toUIMessageStreamResponse so users see a real message instead of An error occurred, and unwrap RetryError to read the status and body", "Cap usage per user on the server, a daily message or token limit checked before the model call, so one user can't drain your credits"],
+    code: { "file": "src/app/api/chat/route.ts", "body": 'import { APICallError, RetryError, streamText } from "ai";\n\n// A message the user can act on instead of "An error occurred."\nfunction chatError(error: unknown): string {\n  const e = RetryError.isInstance(error) ? error.lastError : error;\n  console.error("[chat]", e);\n  if (APICallError.isInstance(e) && e.statusCode === 429) {\n    const text = `${e.message} ${e.responseBody ?? ""}`;\n    if (/quota|credit|spend_limit|usage_limit|billing/i.test(text))\n      return "The AI service is out of credits right now. Please try again later.";\n    return "Lots of people are chatting right now. Try again in a few seconds.";\n  }\n  return "Something went wrong. Please try again.";\n}\n\n// In POST, keep your streamText(...) call and return:\n//   return result.toUIMessageStreamResponse({ onError: chatError });' },
+    prompt: "My Next.js chat app calls OpenAI through the AI SDK and fails with a 429. From the server log, tell me if it's a billing error (You exceeded your current quota, insufficient_quota, credit_balance_exhausted or a spend limit) or a rate limit (Rate limit reached for ... per min), and what I need to change in my OpenAI account for each. Don't add retry loops for billing errors. In the chat route, pass an onError to toUIMessageStreamResponse that unwraps RetryError, logs the full error on the server and returns a short message the user can act on. Then list every place that calls the model in a loop or in parallel, and tell me whether a per user daily limit is checked on the server before the model call."
   },
   {
     id: "max-update-depth",
@@ -1410,12 +1423,13 @@ var NOV9 = { on: "November 9, 2026", iso: "2026-11-09" };
 var NOV12 = { on: "November 12, 2026", iso: "2026-11-12" };
 var NOV18 = { on: "November 18, 2026", iso: "2026-11-18" };
 var NOV19 = { on: "November 19, 2026", iso: "2026-11-19" };
+var NOV20 = { on: "November 20, 2026", iso: "2026-11-20" };
 var VERIFIED_ON = {
   // Re-checked on Next.js 16.4.5 on 2026-11-09 (scratch app next build/next start, same results as 16.4.3).
   // Entries not listed keep their tool's CHECKED date (docs, dashboard, CLI or OAuth-provider checks not re-run).
   stripe: Object.fromEntries(["no-signatures-found", "redirect-3xx", "unauthorized-401", "not-found-404", "edge-runtime", "missing-raw-body", "timestamp-tolerance", "static-export"].map((id) => [id, NOV9])),
   authjs: { ...Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9])), "google-redirect-uri": NOV12 },
-  nextjs: { "next-public-env-undefined": NOV19, "dynamic-server-usage": NOV18, "ai-sdk-stream-timeout": NOV19 }
+  nextjs: { "next-public-env-undefined": NOV19, "dynamic-server-usage": NOV18, "ai-sdk-stream-timeout": NOV20, "openai-429-quota": NOV20 }
 };
 
 // src/lib/doctor.ts
@@ -1665,7 +1679,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.9";
+var VERSION = "0.1.10";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
@@ -1848,6 +1862,14 @@ function findAiRouteLimits(text, minSeconds = 60) {
   if (edge) r.edge = { line: lineOf(edge.index) };
   return r;
 }
+function findTextStreamLoops(text) {
+  const code = blankNonCode(text);
+  if (!/\bstreamText\s*\(/.test(code) || /\bonError\b/.test(code)) return [];
+  const lines = [];
+  const re = /\bfor\s+await\s*\(\s*(?:const|let|var)?\s*[\w$]+\s+of\s+[\w$.?]*\btextStream\b/g;
+  for (let m; m = re.exec(code); ) lines.push(code.slice(0, m.index).split("\n").length);
+  return lines;
+}
 var isClientFile = (text) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(text);
 function sourceFiles(root, max = 4e3) {
   const outFiles = [];
@@ -1909,7 +1931,7 @@ function projectMode(dir, json) {
     if (exposed.length) findings.push({ severity: "warn", title: `.gitignore doesn't cover ${exposed.join(", ")}`, detail: `${exposed.length === 1 ? "This is a personal Claude Code file" : "These are personal Claude Code files"} (your own permissions, allowed commands or notes), so one git add . would commit ${exposed.length === 1 ? "it" : "them"} for everyone.`, fix: [`Add ${exposed.join(" and ")} to .gitignore`, `Check with: git check-ignore -v ${exposed[0]}`], file: ".gitignore" });
   }
   const client = [], server = [];
-  const shortAi = [], edgeAi = [];
+  const shortAi = [], edgeAi = [], textLoops = [];
   for (const f of sourceFiles(abs)) {
     let t = null;
     try {
@@ -1918,6 +1940,7 @@ function projectMode(dir, json) {
     }
     if (t == null) continue;
     if (t.includes("NEXT_PUBLIC_")) for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
+    if (t.includes("textStream")) for (const line of findTextStreamLoops(t)) textLoops.push(`${f}:${line}`);
     if (isSegmentFile(f) && (t.includes("maxDuration") || t.includes("runtime"))) {
       const a = findAiRouteLimits(t);
       if (a.maxDuration) shortAi.push(`${f}:${a.maxDuration.line} (${a.maxDuration.seconds}s)`);
@@ -1929,8 +1952,9 @@ function projectMode(dir, json) {
   if (client.length) findings.push({ severity: "warn", title: `NEXT_PUBLIC_ destructured from process.env in a client file: ${where(client)}`, detail: "Next.js only swaps in NEXT_PUBLIC_ values written out as process.env.NEXT_PUBLIC_NAME. Destructured like this, the value is undefined in the browser (checked on Next.js 16.4.5 with Turbopack and webpack).", fix: envFix, file: client[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
   if (server.length) findings.push({ severity: "info", title: `NEXT_PUBLIC_ destructured from process.env: ${where(server)}`, detail: 'Fine in server only code, but if this file is ever imported by a "use client" component the value is undefined in the browser. Next.js only swaps in values written out as process.env.NEXT_PUBLIC_NAME.', fix: envFix.slice(0, 1), file: server[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
   const aiUrl = ref("/fix/nextjs/ai-sdk-stream-timeout");
-  if (shortAi.length) findings.push({ severity: "info", title: `Short maxDuration on an AI streaming route: ${where(shortAi)}`, detail: "On Vercel the time limit includes every second spent streaming the answer, so a long reply from a reasoning model or a tool calling loop stops halfway once this many seconds pass, and useChat can throw Connection closed. With Fluid compute the default is already 300 seconds on every plan, so this line lowers it.", fix: ["Raise it, e.g. export const maxDuration = 300 (the most Hobby allows; Pro and Enterprise go up to 800)", "Or delete the line to get your project's default", 'Redeploy, then check the seconds in any "Task timed out after N seconds" log line'], file: shortAi[0].split(":")[0], url: aiUrl });
+  if (shortAi.length) findings.push({ severity: "info", title: `Short maxDuration on an AI streaming route: ${where(shortAi)}`, detail: "On Vercel the time limit includes every second spent streaming the answer, so a long reply from a reasoning model or a tool calling loop stops halfway once this many seconds pass, and useChat can throw Connection closed. With Fluid compute the default is already 300 seconds on every plan, so this line lowers it.", fix: ["Raise it, e.g. export const maxDuration = 300 (the most Hobby allows; Pro and Enterprise go up to 800, or 1800 in beta)", "Or delete the line to get your project's default", 'Redeploy, then check the seconds in any "Task timed out after N seconds" log line'], file: shortAi[0].split(":")[0], url: aiUrl });
   if (edgeAi.length) findings.push({ severity: "info", title: `Edge runtime on an AI streaming route: ${where(edgeAi)}`, detail: "On Vercel an Edge function has to start its response within 25 seconds, so a slow first token from the model fails before anything streams. Node.js functions get the full duration.", fix: ['Remove export const runtime = "edge" unless something in this route needs Edge', "Then set export const maxDuration if you need more than your project's default"], file: edgeAi[0].split(":")[0], url: aiUrl });
+  if (textLoops.length) findings.push({ severity: "info", title: `AI SDK textStream hides provider errors: ${where(textLoops)}`, detail: "streamText's textStream skips error parts, so a wrong API key, an account with no credits (OpenAI 429 insufficient_quota) or a provider outage just ends this loop with no text, and the catch around it never runs. Users get a blank answer, and any refund, retry or error message in that catch is skipped (checked with ai 7.0.142).", fix: ['Loop over result.stream instead (fullStream on older AI SDK versions): yield part.text when part.type is "text-delta", throw part.error when part.type is "error"', "Or pass onError to streamText, keep the error, and handle it after the loop"], file: textLoops[0].split(":")[0], url: ref("/fix/nextjs/openai-429-quota") });
   for (const n2 of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
     const t = readIf(path.join(abs, n2));
     if (t == null || !looksLikeMiddleware(t)) continue;
@@ -2003,6 +2027,7 @@ export {
   blankNonCode,
   findAiRouteLimits,
   findEnvDestructures,
+  findTextStreamLoops,
   isClientFile,
   isSegmentFile,
   stripComments

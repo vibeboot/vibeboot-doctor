@@ -160,8 +160,8 @@ test("a committed personal Claude Code file is a WARN with the git rm --cached f
   assert.doesNotMatch(r.stdout, /LEAK/);
 });
 
-test("error mode knows all 74 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
-  assert.match(run(["--help"]).stdout, /against 74 known fixes/);
+test("error mode knows all 75 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
+  assert.match(run(["--help"]).stdout, /against 75 known fixes/);
   const d = run(["Error: Dynamic server usage: Route /account couldn't be rendered statically because it used `cookies`."]);
   assert.equal(d.status, 0, d.stdout);
   assert.match(d.stdout, /fix\/nextjs\/dynamic-server-usage/);
@@ -243,4 +243,42 @@ test("NEXT_PUBLIC_ destructuring quoted inside a string (docs, fix text) is not 
   assert.equal(f.length, 1, r.stdout);
   assert.match(f[0].title, /src\/app\/c\.tsx:3 \(NEXT_PUBLIC_REAL\)/);
   assert.doesNotMatch(r.stdout, /fixes\.ts|NEXT_PUBLIC_B/);
+});
+
+test("an OpenAI 429 quota or rate limit error matches the openai-429-quota fix first", () => {
+  for (const text of [
+    "429 You exceeded your current quota, please check your plan and billing details. insufficient_quota",
+    "AI_RetryError: Failed after 3 attempts. Last error: You exceeded your current quota",
+    "Rate limit reached for gpt-4o-mini in organization org-abc on tokens per min (TPM): Limit 200000, Used 199500, Requested 1200.",
+  ]) {
+    const r = run([text]);
+    assert.equal(r.status, 0, r.stdout);
+    assert.match(r.stdout.split("\n").find((l) => /^1\. /.test(l)), /OpenAI 429 in a chat app/, text);
+    assert.match(r.stdout, /fix\/nextjs\/openai-429-quota/);
+  }
+});
+
+test("a for await loop over streamText's textStream is a note (provider errors never reach the catch)", () => {
+  const dir = nested({
+    "package.json": PKG,
+    "src/lib/ai/provider.ts": AI_ROUTE + "export async function* chat() {\n  const result = streamText({ model: openai(\"x\"), prompt: \"hi\" });\n  try {\n    for await (const chunk of result.textStream) yield chunk;\n  } catch (e) { console.error(e); }\n}\n",
+  });
+  const r = run([dir]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /INFO\s+AI SDK textStream hides provider errors: src\/lib\/ai\/provider\.ts:7/);
+  assert.match(r.stdout, /fix\/nextjs\/openai-429-quota/);
+  assert.match(r.stdout, /result\.stream/);
+  assert.doesNotMatch(r.stdout, /WARN/);
+});
+
+test("no textStream note with an onError, a stream loop, textStream in a comment or string, or no streamText", () => {
+  const dir = nested({
+    "package.json": PKG,
+    "src/a.ts": AI_ROUTE + "const r = streamText({ model: openai(\"x\"), prompt: \"hi\", onError: ({ error }) => { failed = error; } });\nfor await (const c of r.textStream) out += c;\n",
+    "src/b.ts": AI_ROUTE + "const r = streamText({ model: openai(\"x\"), prompt: \"hi\" });\nfor await (const p of r.stream) { if (p.type === \"error\") throw p.error; }\n// for await (const c of r.textStream) out += c;\nconst doc = \"for await (const c of r.textStream)\";\n",
+    "src/c.ts": "import { streamObject } from \"ai\";\nconst r = streamObject({});\nfor await (const c of r.textStream) out += c;\n",
+  });
+  const r = run([dir, "--json"]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).findings.filter((f) => /textStream/.test(f.title)), []);
 });

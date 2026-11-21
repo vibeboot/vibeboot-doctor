@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.9";
+const VERSION = "0.1.10";
 const SITE = "https://vibeboot.dev";
 const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
@@ -178,6 +178,18 @@ export function findAiRouteLimits(text: string, minSeconds = 60): { maxDuration?
   if (edge) r.edge = { line: lineOf(edge.index) };
   return r;
 }
+/* streamText's textStream skips error parts ("Error parts are not surfaced in this stream", ai 7.0.142 d.ts; reproduced Nov 21, 2026 against
+ * a local OpenAI compatible server: 401 and 429 insufficient_quota both ended the loop with no text and nothing thrown). Code that loops
+ * over it with a try/catch never sees a bad key, no credits or an outage. Found in our own AI Chatbot Starter (fixed in v1.2.10).
+ * Note only: a file with an onError anywhere is skipped, since that can already capture the error. */
+export function findTextStreamLoops(text: string): number[] {
+  const code = blankNonCode(text);
+  if (!/\bstreamText\s*\(/.test(code) || /\bonError\b/.test(code)) return [];
+  const lines: number[] = [];
+  const re = /\bfor\s+await\s*\(\s*(?:const|let|var)?\s*[\w$]+\s+of\s+[\w$.?]*\btextStream\b/g;
+  for (let m; (m = re.exec(code)); ) lines.push(code.slice(0, m.index).split("\n").length);
+  return lines;
+}
 export const isClientFile = (text: string) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(text);
 function sourceFiles(root: string, max = 4000): string[] {
   const outFiles: string[] = []; const stack = [""];
@@ -240,12 +252,13 @@ function projectMode(dir: string, json: boolean) {
 
   // NEXT_PUBLIC_ destructured from process.env (undefined in the browser)
   const client: string[] = [], server: string[] = [];
-  const shortAi: string[] = [], edgeAi: string[] = [];
+  const shortAi: string[] = [], edgeAi: string[] = [], textLoops: string[] = [];
   for (const f of sourceFiles(abs)) {
     let t: string | null = null;
     try { if (fs.statSync(path.join(abs, f)).size <= 512_000) t = readIf(path.join(abs, f)); } catch { /* unreadable */ }
     if (t == null) continue;
     if (t.includes("NEXT_PUBLIC_")) for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
+    if (t.includes("textStream")) for (const line of findTextStreamLoops(t)) textLoops.push(`${f}:${line}`);
     if (isSegmentFile(f) && (t.includes("maxDuration") || t.includes("runtime"))) {
       const a = findAiRouteLimits(t);
       if (a.maxDuration) shortAi.push(`${f}:${a.maxDuration.line} (${a.maxDuration.seconds}s)`);
@@ -258,8 +271,10 @@ function projectMode(dir: string, json: boolean) {
   if (server.length) findings.push({ severity: "info", title: `NEXT_PUBLIC_ destructured from process.env: ${where(server)}`, detail: "Fine in server only code, but if this file is ever imported by a \"use client\" component the value is undefined in the browser. Next.js only swaps in values written out as process.env.NEXT_PUBLIC_NAME.", fix: envFix.slice(0, 1), file: server[0].split(":")[0], url: ref("/fix/nextjs/next-public-env-undefined") });
   // AI SDK streaming routes that Vercel will cut off early
   const aiUrl = ref("/fix/nextjs/ai-sdk-stream-timeout");
-  if (shortAi.length) findings.push({ severity: "info", title: `Short maxDuration on an AI streaming route: ${where(shortAi)}`, detail: "On Vercel the time limit includes every second spent streaming the answer, so a long reply from a reasoning model or a tool calling loop stops halfway once this many seconds pass, and useChat can throw Connection closed. With Fluid compute the default is already 300 seconds on every plan, so this line lowers it.", fix: ["Raise it, e.g. export const maxDuration = 300 (the most Hobby allows; Pro and Enterprise go up to 800)", "Or delete the line to get your project's default", "Redeploy, then check the seconds in any \"Task timed out after N seconds\" log line"], file: shortAi[0].split(":")[0], url: aiUrl });
+  if (shortAi.length) findings.push({ severity: "info", title: `Short maxDuration on an AI streaming route: ${where(shortAi)}`, detail: "On Vercel the time limit includes every second spent streaming the answer, so a long reply from a reasoning model or a tool calling loop stops halfway once this many seconds pass, and useChat can throw Connection closed. With Fluid compute the default is already 300 seconds on every plan, so this line lowers it.", fix: ["Raise it, e.g. export const maxDuration = 300 (the most Hobby allows; Pro and Enterprise go up to 800, or 1800 in beta)", "Or delete the line to get your project's default", "Redeploy, then check the seconds in any \"Task timed out after N seconds\" log line"], file: shortAi[0].split(":")[0], url: aiUrl });
   if (edgeAi.length) findings.push({ severity: "info", title: `Edge runtime on an AI streaming route: ${where(edgeAi)}`, detail: "On Vercel an Edge function has to start its response within 25 seconds, so a slow first token from the model fails before anything streams. Node.js functions get the full duration.", fix: ["Remove export const runtime = \"edge\" unless something in this route needs Edge", "Then set export const maxDuration if you need more than your project's default"], file: edgeAi[0].split(":")[0], url: aiUrl });
+
+  if (textLoops.length) findings.push({ severity: "info", title: `AI SDK textStream hides provider errors: ${where(textLoops)}`, detail: "streamText's textStream skips error parts, so a wrong API key, an account with no credits (OpenAI 429 insufficient_quota) or a provider outage just ends this loop with no text, and the catch around it never runs. Users get a blank answer, and any refund, retry or error message in that catch is skipped (checked with ai 7.0.142).", fix: ["Loop over result.stream instead (fullStream on older AI SDK versions): yield part.text when part.type is \"text-delta\", throw part.error when part.type is \"error\"", "Or pass onError to streamText, keep the error, and handle it after the loop"], file: textLoops[0].split(":")[0], url: ref("/fix/nextjs/openai-429-quota") });
 
   // middleware.ts on Next.js 16
   for (const n of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
