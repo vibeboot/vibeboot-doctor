@@ -160,8 +160,8 @@ test("a committed personal Claude Code file is a WARN with the git rm --cached f
   assert.doesNotMatch(r.stdout, /LEAK/);
 });
 
-test("error mode knows all 75 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
-  assert.match(run(["--help"]).stdout, /against 75 known fixes/);
+test("error mode knows all 76 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
+  assert.match(run(["--help"]).stdout, /against 76 known fixes/);
   const d = run(["Error: Dynamic server usage: Route /account couldn't be rendered statically because it used `cookies`."]);
   assert.equal(d.status, 0, d.stdout);
   assert.match(d.stdout, /fix\/nextjs\/dynamic-server-usage/);
@@ -281,4 +281,42 @@ test("no textStream note with an onError, a stream loop, textStream in a comment
   const r = run([dir, "--json"]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.deepEqual(JSON.parse(r.stdout).findings.filter((f) => /textStream/.test(f.title)), []);
+});
+
+test("Stripe No such price / No such customer (test and live mixed) matches the no-such-price fix first", () => {
+  for (const text of [
+    "No such price: 'price_1Abc'; a similar object exists in test mode, but a live mode key was used to make this request.",
+    "StripeInvalidRequestError: No such customer: 'cus_Q1w2e3'; code: resource_missing",
+  ]) {
+    const r = run([text]);
+    assert.equal(r.status, 0, r.stdout);
+    assert.match(r.stdout.split("\n").find((l) => /^1\. /.test(l)), /No such price \/ No such customer/, text);
+    assert.match(r.stdout, /fix\/stripe\/no-such-price/);
+  }
+});
+
+test("a Stripe price id written into code is a note with file:line (test mode ids fail in live mode)", () => {
+  const dir = nested({
+    "package.json": PKG,
+    "src/app/api/checkout/route.ts": "import Stripe from \"stripe\";\nconst stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);\nexport async function POST() {\n  return stripe.checkout.sessions.create({ mode: \"subscription\", line_items: [{ price: \"price_1URG2uRFS02Lh8PfIaO63DWB\", quantity: 1 }] });\n}\n",
+  });
+  const r = run([dir]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /INFO\s+Stripe price id written into code: src\/app\/api\/checkout\/route\.ts:4/);
+  assert.match(r.stdout, /fix\/stripe\/no-such-price/);
+  assert.doesNotMatch(r.stdout, /price_1URG2uRFS02Lh8PfIaO63DWB/);
+  assert.doesNotMatch(r.stdout, /WARN|LEAK/);
+});
+
+test("no price id note for env vars, ids quoted inside longer text, comments, short placeholders or test files", () => {
+  const dir = nested({
+    "package.json": PKG,
+    "src/a.ts": "const price = process.env.STRIPE_PRICE_ID!;\n// e.g. \"price_1URG2uRFS02Lh8PfIaO63DWB\"\n/* \"price_1URG2uRFS02Lh8PfIaO63DWB\" */\n",
+    "src/b.ts": "export const msg = \"No such price: 'price_1URG2uRFS02Lh8PfIaO63DWB'; a similar object exists in test mode\";\nexport const ph = \"price_123\";\n",
+    "tests/checkout.test.ts": "const id = \"price_1URG2uRFS02Lh8PfIaO63DWB\";\n",
+    "src/lib/stripe.spec.ts": "const id = 'price_1URG2uRFS02Lh8PfIaO63DWB';\n",
+  });
+  const r = run([dir, "--json"]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).findings.filter((f) => /price id/.test(f.title)), []);
 });

@@ -1067,6 +1067,39 @@ export async function POST(req: Request) {
     prompt: "My Stripe webhook returns 200 but never updates the right user. Trace how a Checkout Session links to my user: add client_reference_id (and subscription_data.metadata.userId), save session.customer as stripeCustomerId on checkout.session.completed, and look subscription events up by stripeCustomerId. Log a warning when no user matches."
   },
   {
+    id: "no-such-price",
+    quick: "price, customer and key from the same mode",
+    name: "No such price / No such customer (test and live mixed)",
+    where: "server log",
+    looksLike: "StripeInvalidRequestError: No such price: 'price_1Abc...'; a similar object exists in test mode, but a live mode key was used to make this request.\ncode: resource_missing",
+    match: ["no such price", "no such customer", "a similar object exists in", "but a live mode key was used", "but a test mode key was used", "resource_missing", "no such product", "no such subscription", "line_items[0][price]"],
+    means: `Stripe keeps test mode (sandboxes) and live mode apart: each has its own keys, and objects made in one don't exist in the other. Your server sent a price_ or cus_ id that doesn't exist for the secret key it used. When the id exists in the other mode of the same account, Stripe adds "a similar object exists in test mode, but a live mode key was used" (or the reverse). With no hint, the id belongs to another account, another sandbox, or is a typo or an unset env var.`,
+    causes: ["You switched to sk_live_ keys but STRIPE_PRICE_ID still holds the test price id", "A test price id is hardcoded in the code or saved in the database, so changing env vars didn't change it", "stripeCustomerId values saved while testing are reused with live keys", "A prod_ product id is passed where Checkout expects a price_ id", "New env vars were added on the host but the app wasn't redeployed"],
+    fix: ["Check the secret key your server uses: sk_test_ or rk_test_ is test mode, sk_live_ or rk_live_ is live mode. Open the Dashboard in that same mode and search for the id", "Going live? Open the product and click Copy to live mode. The live copy gets new price_ ids, so put the live price id in your production env vars next to the live secret key, then redeploy", "Customers saved while testing don't exist in live mode. Clear those stripeCustomerId values before launch, or make a new customer when Stripe can't find the saved one (code below)", "Keep the publishable key, secret key, webhook secret and price ids from the same mode in each environment: live in Production, test in Preview and local"],
+    code: { file: "src/lib/stripe-customer.ts", body: `import Stripe from "stripe";
+import { db } from "@/lib/db";
+
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!);
+
+// Reuse the saved customer, or make a new one if Stripe can't find it
+// (a cus_ id saved while testing doesn't exist in live mode)
+export async function customerFor(user: { id: string; email: string; stripeCustomerId: string | null }) {
+  if (user.stripeCustomerId) {
+    try {
+      const c = await stripe.customers.retrieve(user.stripeCustomerId);
+      if (!c.deleted) return c.id;
+    } catch (err) {
+      if (!(err instanceof Stripe.errors.StripeError) || err.code !== "resource_missing") throw err;
+    }
+  }
+  const c = await stripe.customers.create({ email: user.email, metadata: { userId: user.id } });
+  await db.user.update({ where: { id: user.id }, data: { stripeCustomerId: c.id } });
+  return c.id;
+}` },
+    prompt: "My Stripe checkout fails with 'No such price' or 'No such customer' (code resource_missing). Find every place this repo reads a Stripe key, a price id (price_) or a saved customer id (cus_, stripeCustomerId). Tell me which ids are hardcoded or stored in the database instead of coming from env vars, and give me a checklist so each environment uses keys, price ids and the webhook secret from one mode only (live in Production, test everywhere else). Where we reuse a saved customer id, make a new customer when Stripe returns resource_missing and save the new id. Never log or hardcode a secret key.",
+    prodOnly: true
+  },
+  {
     id: "static-export",
     quick: "deploy the route to a server/runtime",
     name: "Static export can't run API routes",
@@ -1388,7 +1421,8 @@ var RULES = {
     "missing-raw-body": { file: HOOK, why: "never calls req.json() before verifying the signature." },
     "events-not-enabled": { file: HOOK, why: "checks the production endpoint is subscribed to every event type the handler switches on." },
     "stripe-listen": { file: HOOK, why: "uses the whsec_ that stripe listen prints, only for local forwarding." },
-    "customer-mapping": { file: "stripe.mdc", why: "sets client_reference_id (or metadata.userId) on every Checkout Session." }
+    "customer-mapping": { file: "stripe.mdc", why: "sets client_reference_id (or metadata.userId) on every Checkout Session." },
+    "no-such-price": { file: "stripe.mdc", why: "price ids live in server env vars, test keys stay in local and preview, and live keys only exist in production." }
   }
 };
 var LISTEN = "stripe listen --forward-to localhost:3000/api/stripe/webhook";
@@ -1417,6 +1451,7 @@ var STRIPE_VERIFY = {
   "stripe-listen": { lines: [LISTEN, "stripe listen --print-secret   # the whsec_ to put in .env.local", "stripe trigger checkout.session.completed"], expect: OK200 },
   "timestamp-tolerance": { lines: ["date -u   # should match real UTC", ...LOCAL], expect: "Fresh events verify and return [200]. Don't raise the tolerance to make old payloads pass." },
   "customer-mapping": { lines: [LISTEN, ENV, "stripe trigger checkout.session.completed --add checkout_session:client_reference_id=<test-user-id>", "# the fixture is a one-time payment; also run one subscription checkout in test mode"], expect: "That test user's row gets the Stripe customer id, and a later subscription event finds the same user." },
+  "no-such-price": { lines: ["stripe prices retrieve price_...   # with the same key your server uses; add --live for a live key", "stripe customers retrieve cus_...   # a saved stripeCustomerId"], expect: "Both return the object instead of resource_missing, and a checkout started from your deployed app opens the Stripe page." },
   "static-export": { lines: PROD, expect: "curl gets 400 from your webhook function instead of 404 or 405, and the resent event shows a 200 delivery." }
 };
 var NOV9 = { on: "November 9, 2026", iso: "2026-11-09" };
@@ -1424,10 +1459,11 @@ var NOV12 = { on: "November 12, 2026", iso: "2026-11-12" };
 var NOV18 = { on: "November 18, 2026", iso: "2026-11-18" };
 var NOV19 = { on: "November 19, 2026", iso: "2026-11-19" };
 var NOV20 = { on: "November 20, 2026", iso: "2026-11-20" };
+var NOV21 = { on: "November 21, 2026", iso: "2026-11-21" };
 var VERIFIED_ON = {
   // Re-checked on Next.js 16.4.5 on 2026-11-09 (scratch app next build/next start, same results as 16.4.3).
   // Entries not listed keep their tool's CHECKED date (docs, dashboard, CLI or OAuth-provider checks not re-run).
-  stripe: Object.fromEntries(["no-signatures-found", "redirect-3xx", "unauthorized-401", "not-found-404", "edge-runtime", "missing-raw-body", "timestamp-tolerance", "static-export"].map((id) => [id, NOV9])),
+  stripe: { ...Object.fromEntries(["no-signatures-found", "redirect-3xx", "unauthorized-401", "not-found-404", "edge-runtime", "missing-raw-body", "timestamp-tolerance", "static-export"].map((id) => [id, NOV9])), "no-such-price": NOV21 },
   authjs: { ...Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9])), "google-redirect-uri": NOV12 },
   nextjs: { "next-public-env-undefined": NOV19, "dynamic-server-usage": NOV18, "ai-sdk-stream-timeout": NOV20, "openai-429-quota": NOV20 }
 };
@@ -1679,7 +1715,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.10";
+var VERSION = "0.1.11";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
@@ -1870,6 +1906,28 @@ function findTextStreamLoops(text) {
   for (let m; m = re.exec(code); ) lines.push(code.slice(0, m.index).split("\n").length);
   return lines;
 }
+function findStripePriceIds(text) {
+  const hits = [];
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i], nx = text[i + 1];
+    if (ch === "/" && nx === "/") {
+      const e = text.indexOf("\n", i);
+      i = e < 0 ? text.length : e;
+    } else if (ch === "/" && nx === "*") {
+      const e = text.indexOf("*/", i + 2);
+      i = e < 0 ? text.length : e + 2;
+    } else if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch && !(ch !== "`" && text[j] === "\n")) j += text[j] === "\\" ? 2 : 1;
+      const body = text.slice(i + 1, j);
+      if (/^price_[A-Za-z0-9]{14,}$/.test(body)) hits.push({ line: text.slice(0, i).split("\n").length, id: body });
+      i = j + 1;
+    } else i++;
+  }
+  return hits;
+}
+var isTestFile = (rel) => /(?:^|\/)(?:__tests__|tests?|e2e|fixtures?|__mocks__)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/.test(rel);
 var isClientFile = (text) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(text);
 function sourceFiles(root, max = 4e3) {
   const outFiles = [];
@@ -1932,6 +1990,7 @@ function projectMode(dir, json) {
   }
   const client = [], server = [];
   const shortAi = [], edgeAi = [], textLoops = [];
+  const priceIds = [];
   for (const f of sourceFiles(abs)) {
     let t = null;
     try {
@@ -1941,6 +2000,7 @@ function projectMode(dir, json) {
     if (t == null) continue;
     if (t.includes("NEXT_PUBLIC_")) for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
     if (t.includes("textStream")) for (const line of findTextStreamLoops(t)) textLoops.push(`${f}:${line}`);
+    if (t.includes("price_") && !isTestFile(f)) for (const h of findStripePriceIds(t)) priceIds.push(`${f}:${h.line} (${h.id.slice(0, 10)}\u2026)`);
     if (isSegmentFile(f) && (t.includes("maxDuration") || t.includes("runtime"))) {
       const a = findAiRouteLimits(t);
       if (a.maxDuration) shortAi.push(`${f}:${a.maxDuration.line} (${a.maxDuration.seconds}s)`);
@@ -1955,6 +2015,7 @@ function projectMode(dir, json) {
   if (shortAi.length) findings.push({ severity: "info", title: `Short maxDuration on an AI streaming route: ${where(shortAi)}`, detail: "On Vercel the time limit includes every second spent streaming the answer, so a long reply from a reasoning model or a tool calling loop stops halfway once this many seconds pass, and useChat can throw Connection closed. With Fluid compute the default is already 300 seconds on every plan, so this line lowers it.", fix: ["Raise it, e.g. export const maxDuration = 300 (the most Hobby allows; Pro and Enterprise go up to 800, or 1800 in beta)", "Or delete the line to get your project's default", 'Redeploy, then check the seconds in any "Task timed out after N seconds" log line'], file: shortAi[0].split(":")[0], url: aiUrl });
   if (edgeAi.length) findings.push({ severity: "info", title: `Edge runtime on an AI streaming route: ${where(edgeAi)}`, detail: "On Vercel an Edge function has to start its response within 25 seconds, so a slow first token from the model fails before anything streams. Node.js functions get the full duration.", fix: ['Remove export const runtime = "edge" unless something in this route needs Edge', "Then set export const maxDuration if you need more than your project's default"], file: edgeAi[0].split(":")[0], url: aiUrl });
   if (textLoops.length) findings.push({ severity: "info", title: `AI SDK textStream hides provider errors: ${where(textLoops)}`, detail: "streamText's textStream skips error parts, so a wrong API key, an account with no credits (OpenAI 429 insufficient_quota) or a provider outage just ends this loop with no text, and the catch around it never runs. Users get a blank answer, and any refund, retry or error message in that catch is skipped (checked with ai 7.0.142).", fix: ['Loop over result.stream instead (fullStream on older AI SDK versions): yield part.text when part.type is "text-delta", throw part.error when part.type is "error"', "Or pass onError to streamText, keep the error, and handle it after the loop"], file: textLoops[0].split(":")[0], url: ref("/fix/nextjs/openai-429-quota") });
+  if (priceIds.length) findings.push({ severity: "info", title: `Stripe price id written into code: ${where(priceIds)}`, detail: "Test mode and live mode are separate in Stripe, so a test price_ id in code fails in production with No such price (a similar object exists in test mode), and checkout breaks for every buyer. Fine only if this exact id is a live price used nowhere else.", fix: ["Read the id from an env var instead, e.g. process.env.STRIPE_PRICE_ID, with the test id in .env.local and the live id on your host", "Copy the product to live mode in the Stripe Dashboard and use the new live price_ id there", "Check one: stripe prices retrieve price_... (add --live for the live key)"], file: priceIds[0].split(":")[0], url: ref("/fix/stripe/no-such-price") });
   for (const n2 of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
     const t = readIf(path.join(abs, n2));
     if (t == null || !looksLikeMiddleware(t)) continue;
@@ -2027,8 +2088,10 @@ export {
   blankNonCode,
   findAiRouteLimits,
   findEnvDestructures,
+  findStripePriceIds,
   findTextStreamLoops,
   isClientFile,
   isSegmentFile,
+  isTestFile,
   stripComments
 };

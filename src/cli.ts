@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.10";
+const VERSION = "0.1.11";
 const SITE = "https://vibeboot.dev";
 const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
@@ -190,6 +190,28 @@ export function findTextStreamLoops(text: string): number[] {
   for (let m; (m = re.exec(code)); ) lines.push(code.slice(0, m.index).split("\n").length);
   return lines;
 }
+/* Stripe price ids written into code (fix page /fix/stripe/no-such-price, checked Nov 21, 2026 against the Stripe docs and stripe-node 23.0.0):
+ * objects made in test mode don't exist in live mode, so a test price_ id hardcoded in code fails in production with
+ * "No such price ... a similar object exists in test mode" (resource_missing). Only whole string literals that are a price id count,
+ * so error text that quotes one inside a longer string isn't flagged. Test files are skipped. A note, never a warning. */
+export function findStripePriceIds(text: string): { line: number; id: string }[] {
+  const hits: { line: number; id: string }[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i], nx = text[i + 1];
+    if (ch === "/" && nx === "/") { const e = text.indexOf("\n", i); i = e < 0 ? text.length : e; }
+    else if (ch === "/" && nx === "*") { const e = text.indexOf("*/", i + 2); i = e < 0 ? text.length : e + 2; }
+    else if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      while (j < text.length && text[j] !== ch && !(ch !== "`" && text[j] === "\n")) j += text[j] === "\\" ? 2 : 1;
+      const body = text.slice(i + 1, j);
+      if (/^price_[A-Za-z0-9]{14,}$/.test(body)) hits.push({ line: text.slice(0, i).split("\n").length, id: body });
+      i = j + 1;
+    } else i++;
+  }
+  return hits;
+}
+export const isTestFile = (rel: string) => /(?:^|\/)(?:__tests__|tests?|e2e|fixtures?|__mocks__)\/|\.(?:test|spec)\.[cm]?[jt]sx?$/.test(rel);
 export const isClientFile = (text: string) => /^(?:\s|\/\/[^\n]*\n|\/\*[\s\S]*?\*\/)*["']use client["']/.test(text);
 function sourceFiles(root: string, max = 4000): string[] {
   const outFiles: string[] = []; const stack = [""];
@@ -253,12 +275,14 @@ function projectMode(dir: string, json: boolean) {
   // NEXT_PUBLIC_ destructured from process.env (undefined in the browser)
   const client: string[] = [], server: string[] = [];
   const shortAi: string[] = [], edgeAi: string[] = [], textLoops: string[] = [];
+  const priceIds: string[] = [];
   for (const f of sourceFiles(abs)) {
     let t: string | null = null;
     try { if (fs.statSync(path.join(abs, f)).size <= 512_000) t = readIf(path.join(abs, f)); } catch { /* unreadable */ }
     if (t == null) continue;
     if (t.includes("NEXT_PUBLIC_")) for (const h of findEnvDestructures(t)) (isClientFile(t) ? client : server).push(`${f}:${h.line} (${h.names.join(", ")})`);
     if (t.includes("textStream")) for (const line of findTextStreamLoops(t)) textLoops.push(`${f}:${line}`);
+    if (t.includes("price_") && !isTestFile(f)) for (const h of findStripePriceIds(t)) priceIds.push(`${f}:${h.line} (${h.id.slice(0, 10)}…)`);
     if (isSegmentFile(f) && (t.includes("maxDuration") || t.includes("runtime"))) {
       const a = findAiRouteLimits(t);
       if (a.maxDuration) shortAi.push(`${f}:${a.maxDuration.line} (${a.maxDuration.seconds}s)`);
@@ -275,6 +299,8 @@ function projectMode(dir: string, json: boolean) {
   if (edgeAi.length) findings.push({ severity: "info", title: `Edge runtime on an AI streaming route: ${where(edgeAi)}`, detail: "On Vercel an Edge function has to start its response within 25 seconds, so a slow first token from the model fails before anything streams. Node.js functions get the full duration.", fix: ["Remove export const runtime = \"edge\" unless something in this route needs Edge", "Then set export const maxDuration if you need more than your project's default"], file: edgeAi[0].split(":")[0], url: aiUrl });
 
   if (textLoops.length) findings.push({ severity: "info", title: `AI SDK textStream hides provider errors: ${where(textLoops)}`, detail: "streamText's textStream skips error parts, so a wrong API key, an account with no credits (OpenAI 429 insufficient_quota) or a provider outage just ends this loop with no text, and the catch around it never runs. Users get a blank answer, and any refund, retry or error message in that catch is skipped (checked with ai 7.0.142).", fix: ["Loop over result.stream instead (fullStream on older AI SDK versions): yield part.text when part.type is \"text-delta\", throw part.error when part.type is \"error\"", "Or pass onError to streamText, keep the error, and handle it after the loop"], file: textLoops[0].split(":")[0], url: ref("/fix/nextjs/openai-429-quota") });
+
+  if (priceIds.length) findings.push({ severity: "info", title: `Stripe price id written into code: ${where(priceIds)}`, detail: "Test mode and live mode are separate in Stripe, so a test price_ id in code fails in production with No such price (a similar object exists in test mode), and checkout breaks for every buyer. Fine only if this exact id is a live price used nowhere else.", fix: ["Read the id from an env var instead, e.g. process.env.STRIPE_PRICE_ID, with the test id in .env.local and the live id on your host", "Copy the product to live mode in the Stripe Dashboard and use the new live price_ id there", "Check one: stripe prices retrieve price_... (add --live for the live key)"], file: priceIds[0].split(":")[0], url: ref("/fix/stripe/no-such-price") });
 
   // middleware.ts on Next.js 16
   for (const n of ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"]) {
