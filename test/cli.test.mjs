@@ -160,8 +160,8 @@ test("a committed personal Claude Code file is a WARN with the git rm --cached f
   assert.doesNotMatch(r.stdout, /LEAK/);
 });
 
-test("error mode knows all 76 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
-  assert.match(run(["--help"]).stdout, /against 76 known fixes/);
+test("error mode knows all 77 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
+  assert.match(run(["--help"]).stdout, /against 77 known fixes/);
   const d = run(["Error: Dynamic server usage: Route /account couldn't be rendered statically because it used `cookies`."]);
   assert.equal(d.status, 0, d.stdout);
   assert.match(d.stdout, /fix\/nextjs\/dynamic-server-usage/);
@@ -319,4 +319,21 @@ test("no price id note for env vars, ids quoted inside longer text, comments, sh
   const r = run([dir, "--json"]);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.deepEqual(JSON.parse(r.stdout).findings.filter((f) => /price id/.test(f.title)), []);
+});
+
+test("Module not found: Can't resolve '@/...' matches the alias fix first, and Can't resolve 'fs' keeps the Node built-in fix", () => {
+  for (const text of [
+    "Error: Module not found: Can't resolve '@/components/Header'\nImport map: aliased to relative './src/components/Header' inside of [project]/",
+    "./src/app/page.tsx\nModule not found: Can't resolve '@/lib/utils'",
+    "Module not found: Can't resolve '~/components/ui/button'",
+  ]) {
+    const r = run([text]);
+    assert.equal(r.status, 0, r.stdout);
+    assert.match(r.stdout.split("\n").find((l) => /^1\. /.test(l)), /Can't resolve '@\/\.\.\.' on deploy/, text);
+    assert.match(r.stdout, /fix\/nextjs\/module-not-found-alias/);
+  }
+  const fs = run(["./src/app/blog/page.tsx:2:1\nError: Module not found: Can't resolve 'fs'"]);
+  assert.equal(fs.status, 0, fs.stdout);
+  assert.match(fs.stdout.split("\n").find((l) => /^1\. /.test(l)), /Can't resolve 'fs'/);
+  assert.match(fs.stdout, /fix\/nextjs\/module-not-found-fs/);
 });
