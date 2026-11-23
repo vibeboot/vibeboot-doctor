@@ -1,6 +1,6 @@
 # vibeboot-doctor
 
-Checks a Next.js project for the mistakes AI coding agents make most, and matches pasted errors against 77 verified fixes for Next.js, Auth.js, Prisma and Stripe.
+Checks a Next.js project for the mistakes AI coding agents make most, and matches pasted errors against 78 verified fixes for Next.js, Auth.js, Prisma and Stripe.
 
 ```bash
 # in your project folder
@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: vibeboot/vibeboot-doctor@4576aadcac5ad84d17bc153d5558fd00c206e1e0 # v0.1.13
+      - uses: vibeboot/vibeboot-doctor@0359af0a8d50cd39ec69e19b148b0aa0f9ea91e9 # v0.1.14
 ```
 
 The example pins a full commit SHA, so a new Doctor version never changes your CI until you bump it. To update, swap in the SHA of a newer commit from the [commit list](https://github.com/vibeboot/vibeboot-doctor/commits/main). If you'd rather always run the latest, use `@main`.
