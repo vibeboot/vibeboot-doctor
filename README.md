@@ -53,7 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: vibeboot/vibeboot-doctor@ac1ad822db139caa5c22b6aa31ddd388413f9cbe # v0.1.12
+      - uses: vibeboot/vibeboot-doctor@4576aadcac5ad84d17bc153d5558fd00c206e1e0 # v0.1.13
 ```
 
 The example pins a full commit SHA, so a new Doctor version never changes your CI until you bump it. To update, swap in the SHA of a newer commit from the [commit list](https://github.com/vibeboot/vibeboot-doctor/commits/main). If you'd rather always run the latest, use `@main`.
