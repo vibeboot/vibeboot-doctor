@@ -337,3 +337,41 @@ test("Module not found: Can't resolve '@/...' matches the alias fix first, and C
   assert.match(fs.stdout.split("\n").find((l) => /^1\. /.test(l)), /Can't resolve 'fs'/);
   assert.match(fs.stdout, /fix\/nextjs\/module-not-found-fs/);
 });
+
+test("relative path and TypeScript TS2307 resolve errors open the alias fix, not the Node built-in fix", () => {
+  for (const text of [
+    "./src/app/page.tsx:1:1\nError: Module not found: Can't resolve '../components/Header'",
+    "./src/app/page.tsx\nModule not found: Can't resolve './Header'",
+    "src/app/page.tsx(1,20): error TS2307: Cannot find module '@/lib/db' or its corresponding type declarations.",
+  ]) {
+    const r = run([text]);
+    assert.equal(r.status, 0, r.stdout);
+    assert.match(r.stdout.split("\n").find((l) => /^1\. /.test(l)) ?? "", /Can't resolve '@\/\.\.\.' on deploy/, text);
+    assert.match(r.stdout, /fix\/nextjs\/module-not-found-alias/);
+  }
+  for (const mod of ["fs", "child_process", "node:crypto"]) {
+    const r = run([`Module not found: Can't resolve '${mod}'`]);
+    assert.match(r.stdout.split("\n").find((l) => /^1\. /.test(l)), /Can't resolve 'fs'/, mod);
+  }
+});
+
+test("Next.js 16 project with no middleware file: no generic middleware to proxy note", () => {
+  const dir = project({ "package.json": PKG });
+  const r = run([dir, "--json"]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout).findings.filter((f) => /middleware/i.test(f.title)), []);
+});
+
+test("Next.js 16 project with a middleware.ts still gets the proxy warning", () => {
+  const dir = project({ "package.json": PKG, "middleware.ts": 'import { NextResponse } from "next/server";\nexport function middleware(req) { return NextResponse.next(); }\nexport const config = { matcher: ["/dashboard/:path*"] };\n' });
+  const r = run([dir, "--json"]);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.ok(JSON.parse(r.stdout).findings.some((f) => /middleware\.ts should be proxy\.ts/.test(f.title)), r.stdout);
+});
+
+test("Stripe status codes match only as whole numbers: a real 307 still opens the redirect fix", () => {
+  const r = run(["Stripe webhook delivery failed: 307 Temporary Redirect"]);
+  assert.match(r.stdout.split("\n").find((l) => /^1\. /.test(l)), /307 \/ 308 \/ 301 redirect/);
+  const ts = run(["src/app/page.tsx(1,20): error TS2307: Cannot find module '@/lib/db' or its corresponding type declarations.", "--json"]);
+  assert.deepEqual(JSON.parse(ts.stdout).matches.filter((m) => m.tool === "stripe"), []);
+});

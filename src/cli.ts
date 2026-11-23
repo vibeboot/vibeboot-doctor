@@ -6,7 +6,7 @@ import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { matchErrors, checkPackageJson, checkEnv, looksLikeMiddleware, checkMiddleware, ENTRY_COUNT, type Hit, type PkgFinding } from "@/lib/doctor";
 
-const VERSION = "0.1.12";
+const VERSION = "0.1.13";
 const SITE = "https://vibeboot.dev";
 const ref = (p: string) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 const fixUrl = (h: { tool: string; id: string }) => ref(`/fix/${h.tool}/${h.id}`);
@@ -313,7 +313,8 @@ function projectMode(dir: string, json: boolean) {
   // drop the generic "middleware is now proxy" info when we found the real file, or when there's no middleware at all
   const hasMw = findings.some((f) => /should be .*proxy/.test(f.title));
   const hasProxy = ["proxy.ts", "proxy.js", "src/proxy.ts", "src/proxy.js"].some((n) => fs.existsSync(path.join(abs, n)));
-  const list = findings.filter((f) => !(f.title === "Next.js 16: middleware.ts is now proxy.ts" && (hasMw || hasProxy)));
+  const anyMwFile = ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"].some((n) => fs.existsSync(path.join(abs, n)));
+  const list = findings.filter((f) => !(f.title === "Next.js 16: middleware.ts is now proxy.ts" && (hasMw || hasProxy || !anyMwFile)));
 
   const order = { leak: 0, warn: 1, info: 2, ok: 3 } as const;
   list.sort((a, b) => order[a.severity] - order[b.severity]);

@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-
 // ../vibeboot-doctor/src/cli.ts
 import fs from "node:fs";
 import path from "node:path";
@@ -130,10 +129,10 @@ Error: Module not found: Can't resolve 'fs'
 Error: Module not found: Can't resolve '@/components/Header'
 > 1 | import { Header } from "@/components/Header";
 Import map: aliased to relative './src/components/Header' inside of [project]/`,
-    match: ["can't resolve '@/", "import map: aliased to relative", "can't resolve '~/", "case sensitive", "case-sensitive", "tsconfig paths", "module not found"],
+    match: ["can't resolve '@/", "import map: aliased to relative", "can't resolve '~/", "cannot find module '@/", "can't resolve './", "can't resolve '../", "case sensitive", "case-sensitive", "tsconfig paths", "module not found"],
     means: "The @/ alias comes from the paths setting in tsconfig.json (or jsconfig.json). Next.js swaps @/ for a real folder and then looks for that exact file. With Turbopack, the line under the error tells you which half broke. If it says Import map: aliased to relative './src/components/Header', the alias worked and that file is missing on the build machine, usually because of letter case or because git never got it. If there is no Import map line at all, Next.js never read your paths setting, so tsconfig.json is missing from the build or failed to parse. It works on your laptop because macOS and Windows ignore letter case by default and your local folder has every file. Vercel, Docker images and most CI runners build on Linux, which is case sensitive, and they only get what is in git.",
     causes: ["Letter case. The file is header.tsx but the import says Header, or git still has the old name after you renamed it on a Mac. Linux treats them as two different files", "The file or folder was never committed. A line like lib/ in .gitignore (common in Python templates) also ignores src/lib at any depth", 'paths points at the wrong folder, like "@/*": ["./*"] after the code moved into src/, so @/components looks in ./components', "tsconfig.json isn't in the build. A Dockerfile that copies only src/ and package.json, or a .dockerignore that leaves it out (no Import map line in the error)", "tsconfig.json extends a base config from another folder that the build can't see, so Next.js fails to parse it and the alias is gone (the build also prints An issue occurred while parsing a tsconfig.json file)"],
-    fix: ["Read the line under the error. Import map: aliased to relative './src/...' means look for that exact path. No Import map line means fix tsconfig.json first", "Run git ls-files src/components to see the exact case git has. If it differs, rename it with git mv (for example git mv src/components/header.tsx src/components/Header.tsx) or fix the import, then commit and push", "Run git check-ignore -v on the missing file. If a .gitignore line matches, change lib/ to /lib/ (root only) or remove it, then git add the folder", `Make paths match where the code lives. With a src folder it's "@/*": ["./src/*"], without one it's "@/*": ["./*"]`, "Docker: copy tsconfig.json into the build stage before RUN npm run build (COPY . . with a .dockerignore that skips node_modules and .next is simplest)", "Before you push, build a fresh clone the way the server does: git clone . /tmp/check, then npm ci and npm run build in it. That catches files git doesn't have. On a Mac it won't catch case, so keep the git ls-files check"],
+    fix: ["Read the line under the error. Import map: aliased to relative './src/...' means look for that exact path. No Import map line means fix tsconfig.json first", "Run git ls-files src/components to see the exact case git has. If it differs, rename it with git mv (for example git mv src/components/header.tsx src/components/Header.tsx) or fix the import, then commit and push", "Run git check-ignore -v on the missing file. If a .gitignore line matches, change lib/ to /lib/ (root only) or remove it, then git add the folder", `Make paths match where the code lives. With a src folder it's "@/*": ["./src/*"], without one it's "@/*": ["./*"]`, "Docker: copy tsconfig.json into the build stage before RUN npm run build (COPY . . with a .dockerignore that skips node_modules and .next is simplest)", "Before you push, build a fresh clone the way the server does: git clone . /tmp/check, then npm ci and npm run build in it. That catches files git doesn't have. On a Mac it won't catch case, so keep the git ls-files check", "Same error with a relative path like Can't resolve '../components/Header'? The paths and tsconfig.json steps don't apply. It's letter case or a file git doesn't have, so run the git ls-files and git check-ignore steps. TypeScript reports the same problem as Cannot find module '@/lib/db' or its corresponding type declarations (TS2307)"],
     code: { "file": "terminal", "body": '# 1. What exact name does git have? Linux builds are case sensitive.\ngit ls-files src/components | grep -i header\ngit mv src/components/header.tsx src/components/Header.tsx   # if the case is wrong\n\n# 2. Is the file ignored or never committed?\ngit check-ignore -v src/lib/site.ts\ngit status --short\n\n# 3. Build what the server builds: a clean clone of what is committed\ngit clone . /tmp/check && cd /tmp/check && npm ci && npm run build\n\n# tsconfig.json with a src folder:\n#   "paths": { "@/*": ["./src/*"] }' },
     prompt: `My Next.js build fails on deploy with Module not found: Can't resolve '@/...' but works locally. Read the full error and tell me whether it has an Import map: aliased to relative line. If it does, check that exact path against git ls-files (exact letter case) and git check-ignore -v, and fix the import or rename the file with git mv. If it doesn't, check that tsconfig.json has paths "@/*" pointing at the folder my code is really in (./src/* if I use src), that any extends target exists in the repo, and that my Dockerfile or CI copies tsconfig.json before next build. Don't switch the imports to relative paths to hide it. List every file you changed.`
   },
@@ -1134,7 +1133,8 @@ function scoreError4(e, raw) {
   if (!q.trim()) return 0;
   let s = 0;
   e.match.forEach((m, i) => {
-    if (q.includes(m)) s += (i === 0 ? 10 : 4) + Math.min(m.length, 30) / 10;
+    const hit = /^\d+$/.test(m) ? new RegExp(`(^|[^0-9a-z])${m}($|[^0-9a-z])`).test(q) : q.includes(m);
+    if (hit) s += (i === 0 ? 10 : 4) + Math.min(m.length, 30) / 10;
   });
   const code = /status code (\d{3})|\b(30[1278]|40[134]|405|504)\b/.exec(q);
   const n = code?.[1] ?? code?.[2];
@@ -1476,13 +1476,13 @@ var NOV18 = { on: "November 18, 2026", iso: "2026-11-18" };
 var NOV19 = { on: "November 19, 2026", iso: "2026-11-19" };
 var NOV20 = { on: "November 20, 2026", iso: "2026-11-20" };
 var NOV21 = { on: "November 21, 2026", iso: "2026-11-21" };
-var NOV22 = { on: "November 22, 2026", iso: "2026-11-22" };
+var NOV23 = { on: "November 23, 2026", iso: "2026-11-23" };
 var VERIFIED_ON = {
   // Re-checked on Next.js 16.4.5 on 2026-11-09 (scratch app next build/next start, same results as 16.4.3).
   // Entries not listed keep their tool's CHECKED date (docs, dashboard, CLI or OAuth-provider checks not re-run).
   stripe: { ...Object.fromEntries(["no-signatures-found", "redirect-3xx", "unauthorized-401", "not-found-404", "edge-runtime", "missing-raw-body", "timestamp-tolerance", "static-export"].map((id) => [id, NOV9])), "no-such-price": NOV21 },
   authjs: { ...Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9])), "google-redirect-uri": NOV12 },
-  nextjs: { "next-public-env-undefined": NOV19, "dynamic-server-usage": NOV18, "ai-sdk-stream-timeout": NOV20, "openai-429-quota": NOV20, "module-not-found-alias": NOV22 }
+  nextjs: { "next-public-env-undefined": NOV19, "dynamic-server-usage": NOV18, "ai-sdk-stream-timeout": NOV20, "openai-429-quota": NOV20, "module-not-found-alias": NOV23 }
 };
 
 // src/lib/doctor.ts
@@ -1732,7 +1732,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.12";
+var VERSION = "0.1.13";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
@@ -2043,7 +2043,8 @@ function projectMode(dir, json) {
   }
   const hasMw = findings.some((f) => /should be .*proxy/.test(f.title));
   const hasProxy = ["proxy.ts", "proxy.js", "src/proxy.ts", "src/proxy.js"].some((n2) => fs.existsSync(path.join(abs, n2)));
-  const list = findings.filter((f) => !(f.title === "Next.js 16: middleware.ts is now proxy.ts" && (hasMw || hasProxy)));
+  const anyMwFile = ["middleware.ts", "middleware.js", "src/middleware.ts", "src/middleware.js"].some((n2) => fs.existsSync(path.join(abs, n2)));
+  const list = findings.filter((f) => !(f.title === "Next.js 16: middleware.ts is now proxy.ts" && (hasMw || hasProxy || !anyMwFile)));
   const order = { leak: 0, warn: 1, info: 2, ok: 3 };
   list.sort((a, b) => order[a.severity] - order[b.severity]);
   const n = (s) => list.filter((f) => f.severity === s).length;
