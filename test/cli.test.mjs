@@ -160,8 +160,8 @@ test("a committed personal Claude Code file is a WARN with the git rm --cached f
   assert.doesNotMatch(r.stdout, /LEAK/);
 });
 
-test("error mode knows all 77 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
-  assert.match(run(["--help"]).stdout, /against 77 known fixes/);
+test("error mode knows all 78 fixes, incl. Dynamic server usage and NEXT_PUBLIC_ undefined", () => {
+  assert.match(run(["--help"]).stdout, /against 78 known fixes/);
   const d = run(["Error: Dynamic server usage: Route /account couldn't be rendered statically because it used `cookies`."]);
   assert.equal(d.status, 0, d.stdout);
   assert.match(d.stdout, /fix\/nextjs\/dynamic-server-usage/);
@@ -374,4 +374,38 @@ test("Stripe status codes match only as whole numbers: a real 307 still opens th
   assert.match(r.stdout.split("\n").find((l) => /^1\. /.test(l)), /307 \/ 308 \/ 301 redirect/);
   const ts = run(["src/app/page.tsx(1,20): error TS2307: Cannot find module '@/lib/db' or its corresponding type declarations.", "--json"]);
   assert.deepEqual(JSON.parse(ts.stdout).matches.filter((m) => m.tool === "stripe"), []);
+});
+
+test("missing npm package errors open the package fix (reproduced on next 16.4.5, tsc, node and @prisma/client 6.19.3)", () => {
+  for (const text of [
+    "./src/lib/stripe.ts:1:1\nError: Module not found: Can't resolve 'stripe'",
+    "./src/lib/stripe.ts\nModule not found: Can't resolve 'stripe'\nDid you mean './stripe'?",
+    "./src/lib/db.ts:1:1\nError: Module not found: Can't resolve '@prisma/client'",
+    "src/lib/stripe.ts(1,20): error TS2307: Cannot find module 'stripe' or its corresponding type declarations.",
+    "Error: Cannot find module '@prisma/client'",
+    "Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@prisma/client' imported from /app/prisma/seed.mjs",
+    "./node_modules/@prisma/client/index-browser.js\nModule not found: Can't resolve '.prisma/client/index-browser'",
+    "Error: Cannot find module '.prisma/client/default'",
+    "src/lib/db.ts(1,10): error TS2305: Module '\"@prisma/client\"' has no exported member 'PrismaClient'.",
+  ]) {
+    const r = run([text]);
+    assert.equal(r.status, 0, r.stdout);
+    assert.match(r.stdout.split("\n").find((l) => /^1\. /.test(l)) ?? "", /package not installed/, text);
+    assert.match(r.stdout, /fix\/nextjs\/module-not-found-package/);
+  }
+});
+
+test("Node built-ins, aliases and relative paths keep their own fixes after the package entry", () => {
+  for (const [text, want] of [
+    ["Error: Module not found: Can't resolve 'fs'", /Can't resolve 'fs'/],
+    ["Module not found: Can't resolve 'node:crypto'", /Can't resolve 'fs'/],
+    ["Error: Module not found: Can't resolve '@/components/Header'", /Can't resolve '@\/\.\.\.' on deploy/],
+    ["Module not found: Can't resolve '../components/Header'", /Can't resolve '@\/\.\.\.' on deploy/],
+    ["error TS2307: Cannot find module '@/lib/db' or its corresponding type declarations.", /Can't resolve '@\/\.\.\.' on deploy/],
+    ["Error: @prisma/client did not initialize yet. Please run \"prisma generate\" and try to import it again.", /did not initialize yet/],
+  ]) {
+    const r = run([text]);
+    assert.match(r.stdout.split("\n").find((l) => /^1\. /.test(l)) ?? "", want, text);
+    assert.doesNotMatch(r.stdout, /module-not-found-package/, text);
+  }
 });

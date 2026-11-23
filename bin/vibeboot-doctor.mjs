@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 // ../vibeboot-doctor/src/cli.ts
 import fs from "node:fs";
 import path from "node:path";
@@ -135,6 +136,39 @@ Import map: aliased to relative './src/components/Header' inside of [project]/`,
     fix: ["Read the line under the error. Import map: aliased to relative './src/...' means look for that exact path. No Import map line means fix tsconfig.json first", "Run git ls-files src/components to see the exact case git has. If it differs, rename it with git mv (for example git mv src/components/header.tsx src/components/Header.tsx) or fix the import, then commit and push", "Run git check-ignore -v on the missing file. If a .gitignore line matches, change lib/ to /lib/ (root only) or remove it, then git add the folder", `Make paths match where the code lives. With a src folder it's "@/*": ["./src/*"], without one it's "@/*": ["./*"]`, "Docker: copy tsconfig.json into the build stage before RUN npm run build (COPY . . with a .dockerignore that skips node_modules and .next is simplest)", "Before you push, build a fresh clone the way the server does: git clone . /tmp/check, then npm ci and npm run build in it. That catches files git doesn't have. On a Mac it won't catch case, so keep the git ls-files check", "Same error with a relative path like Can't resolve '../components/Header'? The paths and tsconfig.json steps don't apply. It's letter case or a file git doesn't have, so run the git ls-files and git check-ignore steps. TypeScript reports the same problem as Cannot find module '@/lib/db' or its corresponding type declarations (TS2307)"],
     code: { "file": "terminal", "body": '# 1. What exact name does git have? Linux builds are case sensitive.\ngit ls-files src/components | grep -i header\ngit mv src/components/header.tsx src/components/Header.tsx   # if the case is wrong\n\n# 2. Is the file ignored or never committed?\ngit check-ignore -v src/lib/site.ts\ngit status --short\n\n# 3. Build what the server builds: a clean clone of what is committed\ngit clone . /tmp/check && cd /tmp/check && npm ci && npm run build\n\n# tsconfig.json with a src folder:\n#   "paths": { "@/*": ["./src/*"] }' },
     prompt: `My Next.js build fails on deploy with Module not found: Can't resolve '@/...' but works locally. Read the full error and tell me whether it has an Import map: aliased to relative line. If it does, check that exact path against git ls-files (exact letter case) and git check-ignore -v, and fix the import or rename the file with git mv. If it doesn't, check that tsconfig.json has paths "@/*" pointing at the folder my code is really in (./src/* if I use src), that any extends target exists in the repo, and that my Dockerfile or CI copies tsconfig.json before next build. Don't switch the imports to relative paths to hide it. List every file you changed.`
+  },
+  {
+    id: "module-not-found-package",
+    quick: "install it where package.json lives and commit both lock files, or run prisma generate",
+    name: "Module not found: Can't resolve 'stripe' (package not installed)",
+    where: "build error",
+    looksLike: `./src/lib/stripe.ts:1:1
+Error: Module not found: Can't resolve 'stripe'
+> 1 | import Stripe from "stripe";
+
+https://nextjs.org/docs/messages/module-not-found`,
+    match: ["can't resolve '.prisma/client", "cannot find module '.prisma/client", "cannot find package '", "has no exported member 'prismaclient'", "module not found"],
+    means: "The name in quotes has no ./ and no @/ in front, so Next.js treats it as an npm package and looks for it in node_modules. It isn't there. This is an install problem, not a path problem. It often works on your laptop because you or the agent ran npm install there, but the build server only installs what is listed in the package.json and lock file you committed. Node scripts say the same thing as Cannot find module 'stripe' (or Cannot find package '@prisma/client' imported from ... for ES modules), and TypeScript says TS2307 Cannot find module 'stripe' or its corresponding type declarations. A name that starts with .prisma/client is different: @prisma/client is installed, but the client it generates into node_modules was never created because prisma generate didn't run.",
+    causes: ['The agent wrote import Stripe from "stripe" but never installed the package, or installed it in a different folder (the repo root instead of the app folder in a monorepo)', "It was installed on your machine but the updated package.json or package-lock.json was never committed, so the build server doesn't install it", "It is in devDependencies and the build installs production dependencies only (npm ci --omit=dev, or NODE_ENV=production set before npm ci in a Dockerfile)", "Can't resolve '.prisma/client/index-browser' or Cannot find module '.prisma/client/default': prisma generate never ran. The install skipped scripts (npm install --ignore-scripts, or pnpm 10, which doesn't run dependency install scripts unless you allow them) and the build script has no generate step", "webpack sometimes adds Did you mean './stripe'? because you have a file called stripe.ts. Ignore that hint, the import really wants the npm package"],
+    fix: ["Read the name in quotes. No ./ and no @/ in front means it's an npm package. If it starts with @/ or ./ it's a path problem, see the Can't resolve '@/...' fix instead", "Install it in the folder that has your app's package.json, using the exact name from the error: npm install stripe (for a scoped name use the first two parts, like @prisma/client)", "Run git status. package.json and package-lock.json should show as changed. Commit both and push, or the build server still won't have the package", "If the build or the running app needs a package that sits in devDependencies, move it to dependencies, or don't set NODE_ENV=production before npm ci in your Dockerfile", `For .prisma/client or Module '@prisma/client' has no exported member 'PrismaClient' (TS2305), run npx prisma generate. Then make it automatic with "postinstall": "prisma generate" and a build script of prisma generate && next build`, "Before you push, build a fresh clone the way the server does: git clone . /tmp/check, then npm ci and npm run build in it. A package that was never saved to package.json fails there first"],
+    code: { "file": "terminal", "body": `# 1. Is it in package.json and installed?
+grep '"stripe"' package.json
+npm ls stripe
+
+# 2. Install it where your app's package.json is, then commit both files
+npm install stripe
+git add package.json package-lock.json
+git commit -m "Add stripe"
+
+# 3. Prisma: .prisma/client means the client was never generated
+npx prisma generate
+#    package.json, so every install and build generates it:
+#    "postinstall": "prisma generate",
+#    "build": "prisma generate && next build"
+
+# 4. Build what the server builds: a clean clone of what is committed
+git clone . /tmp/check && cd /tmp/check && npm ci && npm run build` },
+    prompt: `My Next.js build fails with Module not found: Can't resolve '<package>' (or Cannot find module '<package>'). Check whether that package is listed in package.json and installed in node_modules in the folder where next build runs. If it's missing, install it there with npm install and remind me to commit package.json and package-lock.json. If it's only in devDependencies but the build or the app needs it, move it to dependencies. If the error mentions .prisma/client, run prisma generate and add "postinstall": "prisma generate" and a build script of "prisma generate && next build". Don't swap the import for a different package and don't change import paths. List every file you changed.`
   },
   {
     id: "prisma-in-browser",
@@ -331,6 +365,18 @@ Import map: aliased to relative './src/components/Header' inside of [project]/`,
     prompt: "React hit Maximum update depth exceeded. Find the effect or handler that sets state on every render, explain the loop in one sentence, and fix it with correct dependencies or by passing a function instead of calling it."
   }
 ];
+var NODE_BUILTINS = /* @__PURE__ */ new Set(["assert", "async_hooks", "buffer", "child_process", "cluster", "console", "constants", "crypto", "dgram", "diagnostics_channel", "dns", "domain", "events", "fs", "http", "http2", "https", "inspector", "module", "net", "os", "path", "perf_hooks", "process", "punycode", "querystring", "readline", "repl", "stream", "string_decoder", "sys", "timers", "tls", "trace_events", "tty", "url", "util", "v8", "vm", "wasi", "worker_threads", "zlib"]);
+function missingPackage(raw) {
+  const re = /(?:can't resolve|cannot find module|cannot find package)\s+['"`]([^'"`\s]+)['"`]/gi;
+  for (const m of raw.matchAll(re)) {
+    const spec = m[1];
+    if (/^(\.{1,2}\/|\/|@\/|~\/|#|node:|[a-z]:[\\/])/i.test(spec) || spec.includes("\\")) continue;
+    const name = spec.startsWith("@") ? spec.split("/").slice(0, 2).join("/") : spec.split("/")[0];
+    if (!name || NODE_BUILTINS.has(name)) continue;
+    return spec;
+  }
+  return null;
+}
 function scoreError(e, raw) {
   const q = raw.toLowerCase();
   if (!q.trim()) return 0;
@@ -338,6 +384,7 @@ function scoreError(e, raw) {
   e.match.forEach((m, i) => {
     if (q.includes(m)) s += (i === 0 ? 10 : 4) + Math.min(m.length, 30) / 10;
   });
+  if (e.id === "module-not-found-package" && missingPackage(raw)) s += 14;
   return s;
 }
 
@@ -1482,7 +1529,7 @@ var VERIFIED_ON = {
   // Entries not listed keep their tool's CHECKED date (docs, dashboard, CLI or OAuth-provider checks not re-run).
   stripe: { ...Object.fromEntries(["no-signatures-found", "redirect-3xx", "unauthorized-401", "not-found-404", "edge-runtime", "missing-raw-body", "timestamp-tolerance", "static-export"].map((id) => [id, NOV9])), "no-such-price": NOV21 },
   authjs: { ...Object.fromEntries(["missing-secret", "untrusted-host", "v4-imports"].map((id) => [id, NOV9])), "google-redirect-uri": NOV12 },
-  nextjs: { "next-public-env-undefined": NOV19, "dynamic-server-usage": NOV18, "ai-sdk-stream-timeout": NOV20, "openai-429-quota": NOV20, "module-not-found-alias": NOV23 }
+  nextjs: { "next-public-env-undefined": NOV19, "dynamic-server-usage": NOV18, "ai-sdk-stream-timeout": NOV20, "openai-429-quota": NOV20, "module-not-found-alias": NOV23, "module-not-found-package": NOV23 }
 };
 
 // src/lib/doctor.ts
@@ -1732,7 +1779,7 @@ function checkMiddleware(text) {
 }
 
 // ../vibeboot-doctor/src/cli.ts
-var VERSION = "0.1.13";
+var VERSION = "0.1.14";
 var SITE = "https://vibeboot.dev";
 var ref = (p) => /^https?:\/\//i.test(p) ? p : `${SITE}${p}${p.includes("?") ? "&" : "?"}ref=cli`;
 var fixUrl = (h) => ref(`/fix/${h.tool}/${h.id}`);
